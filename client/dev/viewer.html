@@ -1,0 +1,65 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Breakpoint Zero - model viewer</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#555;font-family:sans-serif}#info{position:fixed;left:10px;top:10px;color:#fff;font:14px monospace;text-shadow:1px 1px 0 #000}</style>
+<script type="importmap">{ "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }</script>
+</head><body><div id="info">Model viewer: ?mode=vm | ?mode=char&amp;yaw=0&amp;pitch=0&amp;speed=0</div>
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { ViewModel } from '/js/viewmodel.js';
+import { CharacterFactory } from '/js/characters.js';
+import { QUALITY } from '/js/settings.js';
+const q = new URLSearchParams(location.search);
+const mode = q.get('mode') || 'char';
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.autoClear = false;
+document.body.appendChild(renderer.domElement);
+const pm = new THREE.PMREMGenerator(renderer);
+const env = pm.fromScene(new RoomEnvironment(), 0.04).texture;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fa6bf);
+scene.environment = env; scene.environmentIntensity = 0.5;
+scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x6a5a4a, 1.2));
+const sun = new THREE.DirectionalLight(0xffffff, 2.5); sun.position.set(3, 6, 4); scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(20, 20), new THREE.MeshLambertMaterial({ color: 0x9a9a9a }));
+ground.rotation.x = -Math.PI / 2; scene.add(ground);
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.05, 100);
+let tick = null;
+if (mode === 'vm') {
+  const vm = new ViewModel();
+  vm.scene.environment = env; vm.scene.environmentIntensity = 0.8;
+  vm.resize(innerWidth / innerHeight);
+  if (q.get('base')) vm.rifleBase.fromArray(q.get('base').split(',').map(Number));
+  if (q.get('reload')) vm.reload();
+  if (q.get('rocket')) vm.fireRocket();
+  if (q.get('fire')) vm.fire();
+  camera.position.set(0, 1.6, 0);
+  scene.background = new THREE.Color(0x6e7f92);
+  tick = (dt) => { vm.update(dt, { speed: 0, onGround: true, mouseDX: 0, mouseDY: 0, alive: true }); renderer.clear(); renderer.render(scene, camera); renderer.clearDepth(); renderer.render(vm.scene, vm.camera); };
+  window.vm = vm;
+} else {
+  const f = new CharacterFactory();
+  await f.load();
+  const ch = f.create(Number(q.get('id') || 1), 'Test', QUALITY.high);
+  scene.add(ch.root);
+  const yaw = Number(q.get('yaw') || 0), pitch = Number(q.get('pitch') || 0), speed = Number(q.get('speed') || 0);
+  const camYaw = Number(q.get('cam') || 0.6);
+  const dist = Number(q.get('dist') || 3.2);
+  camera.position.set(Math.sin(camYaw) * dist, 1.4, Math.cos(camYaw) * dist);
+  camera.lookAt(0, 1.0, 0);
+  window.ch = ch;
+  tick = (dt) => {
+    const vx = -Math.sin(yaw + Number(q.get('movedir') || 0)) * speed, vz = -Math.cos(yaw + Number(q.get('movedir') || 0)) * speed;
+    ch.update(dt, { x: 0, y: 0, z: 0, yaw, pitch, vx, vy: 0, vz, onGround: true, launcher: !!q.get('launcher') });
+    renderer.clear(); renderer.render(scene, camera);
+  };
+  if (q.get('die')) setTimeout(() => ch.die([0, 0, 0], null), 300);
+}
+let last = performance.now();
+function loop(t) { const dt = Math.min(0.05, (t - last) / 1000); last = t; tick(dt); requestAnimationFrame(loop); }
+requestAnimationFrame(loop);
+window.ready = true;
+</script></body></html>

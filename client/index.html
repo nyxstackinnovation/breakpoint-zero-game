@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Breakpoint Zero</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 fill=%22%230b0d1a%22/%3E%3Cpath d=%22M6 6h12l-4 8h8L10 28l3-10H6z%22 fill=%22%23ffd60a%22/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Russo+One&family=Chakra+Petch:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <script type="importmap">
+    { "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }
+  </script>
+</head>
+<body>
+  <canvas id="view"></canvas>
+
+  <div id="ui">
+    <!-- MAIN MENU -->
+    <section id="screen-menu" class="screen active">
+      <div class="menu-stripes"></div>
+      <div class="menu-wrap">
+        <div class="title-block">
+          <div class="logo-kicker">ONLINE VOXEL DEMOLITION SHOOTER</div>
+          <h1 class="logo">BREAKPOINT<span>ZERO</span></h1>
+          <p class="tagline">Bring the building down. Bring everyone down with it.</p>
+        </div>
+        <div class="menu-panel">
+          <label class="field">
+            <span>CALLSIGN</span>
+            <input id="name-input" maxlength="16" autocomplete="off" spellcheck="false">
+          </label>
+          <button id="btn-quick" class="btn big primary"><span>QUICK MATCH</span></button>
+          <button id="btn-create" class="btn big"><span>CREATE PRIVATE ROOM</span></button>
+          <div class="join-row">
+            <input id="code-input" placeholder="ROOM CODE" maxlength="5" autocomplete="off" spellcheck="false">
+            <button id="btn-join" class="btn"><span>JOIN</span></button>
+          </div>
+          <button id="btn-settings" class="btn"><span>SETTINGS</span></button>
+        </div>
+        <div class="controls-card">
+          <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> MOVE</div>
+          <div><kbd>MOUSE</kbd> AIM</div>
+          <div><kbd>SPACE</kbd> JUMP</div>
+          <div><kbd>LMB</kbd> RIFLE</div>
+          <div><kbd>RMB</kbd> ROCKET</div>
+          <div><kbd>R</kbd> RELOAD</div>
+          <div><kbd>TAB</kbd> SCORES</div>
+          <div><kbd>ESC</kbd> MENU</div>
+          <p class="tip">TIP: Fire a rocket at your feet while jumping to rocket-jump. Blow out a building's base to drop it on enemies.</p>
+        </div>
+      </div>
+      <div id="conn-status" class="conn">CONNECTING…</div>
+    </section>
+
+    <!-- PRIVATE LOBBY -->
+    <section id="screen-lobby" class="screen">
+      <div class="menu-stripes"></div>
+      <div class="lobby-panel">
+        <div class="lobby-head">
+          <h2>PRIVATE ROOM</h2>
+          <div class="room-code">
+            <span>ROOM CODE</span>
+            <b id="lobby-code">-----</b>
+            <button id="btn-copy" class="btn small"><span>COPY</span></button>
+          </div>
+        </div>
+        <div class="lobby-body">
+          <div class="lobby-players">
+            <h3>PLAYERS <em id="lobby-count"></em></h3>
+            <ul id="lobby-list"></ul>
+          </div>
+          <div class="lobby-settings">
+            <h3>MATCH SETTINGS</h3>
+            <div class="map-grid" id="map-grid"></div>
+            <div class="setting-row">
+              <span>BOTS</span>
+              <input type="range" id="set-bots" min="0" max="7" step="1">
+              <b id="set-bots-val">3</b>
+            </div>
+            <div class="setting-row">
+              <span>BOT SKILL</span>
+              <div class="seg" id="set-diff">
+                <button data-v="easy">EASY</button><button data-v="medium">MEDIUM</button><button data-v="hard">HARD</button>
+              </div>
+            </div>
+            <label class="setting-row check"><span>MAP ROTATION</span><input type="checkbox" id="set-rotation"></label>
+            <p class="host-note" id="host-note"></p>
+          </div>
+        </div>
+        <div class="lobby-foot">
+          <button id="btn-leave-lobby" class="btn"><span>LEAVE</span></button>
+          <button id="btn-start" class="btn big primary"><span>START MATCH</span></button>
+        </div>
+      </div>
+    </section>
+
+    <!-- LOADING -->
+    <section id="screen-loading" class="screen">
+      <div class="loading-box">
+        <div class="loading-kicker">DEPLOYING TO</div>
+        <div class="loading-map" id="loading-map">—</div>
+        <div class="bar"><i id="loading-bar"></i></div>
+        <div id="loading-text">BUILDING WORLD…</div>
+      </div>
+    </section>
+
+    <!-- HUD -->
+    <section id="hud" class="screen">
+      <div id="nameplates"></div>
+      <div id="vignette"></div>
+      <div id="damage-flash"></div>
+      <div id="crosshair"><i class="ch-t"></i><i class="ch-b"></i><i class="ch-l"></i><i class="ch-r"></i><i class="ch-dot"></i></div>
+      <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
+      <div id="dmg-indicators"></div>
+      <div id="top-bar">
+        <div class="tb-map" id="hud-map">SKYLINE</div>
+        <div class="tb-timer" id="hud-timer">4:00</div>
+        <div class="tb-rank" id="hud-rank">—</div>
+      </div>
+      <div id="killfeed"></div>
+      <div id="center-msg"></div>
+      <div id="heal-pop"></div>
+      <div id="health-box">
+        <div class="hb-label">HEALTH</div>
+        <div class="hb-num" id="hud-health">100</div>
+        <div class="hb-bar"><i id="hud-health-bar"></i></div>
+      </div>
+      <div id="ammo-box">
+        <div class="ab-rifle"><span class="ab-label">RIFLE</span><b id="hud-ammo">30</b><em>/ 30</em></div>
+        <div class="ab-reload" id="hud-reload"><i></i></div>
+        <div class="ab-rockets"><span class="ab-label">ROCKETS</span><div id="hud-rockets"></div></div>
+      </div>
+      <div id="perf"></div>
+    </section>
+
+    <div id="scoreboard" class="overlay hidden">
+      <div class="sb-panel">
+        <div class="sb-head"><h2 id="sb-title">SCOREBOARD</h2><span id="sb-sub"></span></div>
+        <table><thead><tr><th>#</th><th class="l">PLAYER</th><th>KILLS</th><th>DEATHS</th><th>K/D</th><th>PING</th></tr></thead><tbody id="sb-body"></tbody></table>
+      </div>
+    </div>
+
+    <div id="death-screen" class="overlay hidden">
+      <div class="death-box">
+        <div class="death-title">ELIMINATED</div>
+        <div class="death-by" id="death-by"></div>
+        <div class="death-timer" id="death-timer">RESPAWN IN 3</div>
+      </div>
+    </div>
+
+    <div id="round-end" class="overlay hidden">
+      <div class="re-panel">
+        <div class="re-kicker">ROUND OVER</div>
+        <div class="re-winner" id="re-winner">—</div>
+        <ol id="re-standings"></ol>
+        <div class="re-next" id="re-next">NEXT MAP IN 10</div>
+      </div>
+    </div>
+
+    <div id="pause-menu" class="overlay hidden">
+      <div class="pause-panel">
+        <h2>PAUSED</h2>
+        <div class="pause-code" id="pause-code"></div>
+        <button id="btn-resume" class="btn big primary"><span>RESUME</span></button>
+        <button id="btn-pause-settings" class="btn"><span>SETTINGS</span></button>
+        <button id="btn-host-skip" class="btn host-only"><span>SKIP TO NEXT MAP</span></button>
+        <button id="btn-host-lobby" class="btn host-only"><span>END MATCH → LOBBY</span></button>
+        <button id="btn-leave" class="btn danger"><span>LEAVE MATCH</span></button>
+      </div>
+    </div>
+
+    <div id="settings-modal" class="overlay hidden">
+      <div class="settings-panel">
+        <h2>SETTINGS</h2>
+        <div class="settings-grid">
+          <label>MOUSE SENSITIVITY <input type="range" id="opt-sens" min="0.1" max="4" step="0.05"><b id="opt-sens-v"></b></label>
+          <label>FIELD OF VIEW <input type="range" id="opt-fov" min="70" max="110" step="1"><b id="opt-fov-v"></b></label>
+          <label>MASTER VOLUME <input type="range" id="opt-vol" min="0" max="1" step="0.05"><b id="opt-vol-v"></b></label>
+          <label>GRAPHICS QUALITY
+            <select id="opt-quality"><option value="low">LOW</option><option value="medium">MEDIUM</option><option value="high">HIGH</option></select>
+          </label>
+          <label class="check">INVERT MOUSE Y <input type="checkbox" id="opt-invert"></label>
+          <label class="check">SHOW NAMEPLATES <input type="checkbox" id="opt-names"></label>
+          <label class="check">SHOW FPS / PING <input type="checkbox" id="opt-fps"></label>
+          <label class="check">SCREEN SHAKE <input type="checkbox" id="opt-shake"></label>
+        </div>
+        <button id="btn-settings-close" class="btn big primary"><span>DONE</span></button>
+      </div>
+    </div>
+
+    <div id="click-to-play" class="hidden"><div>CLICK TO PLAY</div><small>ESC opens the menu</small></div>
+    <div id="toasts"></div>
+  </div>
+
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>
