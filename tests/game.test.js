@@ -142,7 +142,7 @@ test('rounds last four minutes, then intermission, then the next map in rotation
   assert.equal(g.players.get(1).kills, 0, 'scores reset for the new round');
 });
 
-test('eight bots play a full minute without errors and score kills', () => {
+test('eight bots play a full minute without errors and land hits', () => {
   for (const diff of ['easy', 'medium', 'hard']) {
     const g = makeGame('downtown');
     for (let id = 1; id <= 8; id++) {
@@ -151,8 +151,13 @@ test('eight bots play a full minute without errors and score kills', () => {
       g.players.set(id, p);
       g.spawn(p);
     }
+    let dealt = 0;
+    const dmg = g.damage.bind(g);
+    g.damage = (q, ...rest) => { const hp = q.health; dmg(q, ...rest); dealt += hp - q.health; };
     for (let i = 0; i < TICK_RATE * 60; i++) g.update();
-    if (diff !== 'easy') assert.ok(g.stats.kills > 0, `${diff} bots should get kills`);
+    // bots are deliberately weak, but medium and hard ones still have to fight
+    if (diff !== 'easy') assert.ok(dealt > 0, `${diff} bots should hit each other`);
+    if (diff === 'hard') assert.ok(g.stats.kills > 0, 'hard bots should get kills');
     for (const p of g.players.values()) {
       assert.ok(Number.isFinite(p.move.x) && Number.isFinite(p.move.y) && Number.isFinite(p.move.z));
     }
@@ -167,4 +172,24 @@ test('input budget prevents speed hacking', () => {
   for (let i = 0; i < 60; i++) g.update();
   // one second of real time can never move more than ~walk speed plus burst allowance
   assert.ok(40 - a.move.z < 7.2 * 1.4, `moved ${40 - a.move.z}`);
+});
+
+test('a stuttering server still applies every input instead of falling behind', () => {
+  const g = makeGame();
+  flatten(g);
+  const a = addPlayer(g, 1, 20, 60);
+  let now = 0;
+  g.clock = () => now;
+  const step = 1000 / TICK_RATE;
+  let sent = 0;
+  // 10 s of real time; the client sends one input per tick, but the server loses a 150 ms burst every second
+  for (let t = 0; t < TICK_RATE * 10; t++) {
+    now += step;
+    a.inputQueue.push(inp(BTN.FORWARD, 0)); sent++;
+    const stalled = t % TICK_RATE < 9;
+    if (!stalled) g.update();
+  }
+  for (let i = 0; i < 40; i++) { now += step; g.update(); }
+  assert.ok(a.inputQueue.length <= 2, `queue drained (${a.inputQueue.length} left)`);
+  assert.equal(a.lastSeq, a.inputQueue.length ? a.inputQueue[0].seq - 1 : seq - 1, 'no input was skipped');
 });

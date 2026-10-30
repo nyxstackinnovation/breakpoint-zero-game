@@ -7,6 +7,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { buildRifle, buildLauncher } from './weaponModels.js';
 import { PLAYER_COLORS, VOXEL } from '/shared/constants.js';
+import { HumanCharacter, setFaceMap } from './human.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3(), _v4 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
@@ -74,12 +75,40 @@ export class CharacterFactory {
     this.scale = 1;
   }
 
-  async load(url = '/assets/models/soldier.glb') {
+  async load() {
+    // 1st choice: the five Blender-built operators; then the older generic soldier; then Mixamo; else procedural
+    for (const file of ['operators.glb', 'human_soldier.glb']) {
+      try {
+        const gltf = await new GLTFLoader().loadAsync(`/assets/models/${file}`);
+        if (file === 'operators.glb') {
+          // photographed faces from the reference sheets (UVs point into this atlas; everything else samples white)
+          try {
+            const tex = await new THREE.TextureLoader().loadAsync('/assets/textures/faces.png');
+            tex.flipY = false;
+            tex.colorSpace = THREE.SRGBColorSpace;
+            tex.anisotropy = 4;
+            setFaceMap(tex);
+          } catch (e) { console.warn('faces.png unavailable', e); }
+        }
+        this.human = gltf.scene;
+        this.humanClips = {};
+        for (const clip of gltf.animations) this.humanClips[clip.name.replace(/\.\d+$/, '')] = clip;
+        for (const [n, clip] of Object.entries(this.humanClips)) {
+          if (n.startsWith('Death')) continue;
+          clip.tracks = clip.tracks.filter((t) => !/^Root\.(position|quaternion)$/.test(t.name));
+        }
+        this.ready = true;
+        this.kind = 'human';
+        this.file = file;
+        return;
+      } catch (e) {
+        console.warn(`${file} unavailable`, e);
+      }
+    }
     try {
-      const gltf = await new GLTFLoader().loadAsync(url);
+      const gltf = await new GLTFLoader().loadAsync('/assets/models/soldier.glb');
       this.template = gltf.scene;
       for (const clip of gltf.animations) this.clips[clip.name.toLowerCase()] = clip;
-      // remove root motion from locomotion clips so the server controls position
       for (const clip of gltf.animations) {
         for (const track of clip.tracks) {
           if (track.name.endsWith('Hips.position')) {
@@ -95,6 +124,7 @@ export class CharacterFactory {
       this.scale = h > 0.1 ? 1.8 / h : 1;
       this.footOffset = -box.min.y * this.scale;
       this.ready = true;
+      this.kind = 'mixamo';
     } catch (e) {
       console.warn('Character model failed to load, using procedural humans', e);
       this.failed = true;
@@ -102,6 +132,7 @@ export class CharacterFactory {
   }
 
   create(id, name, quality) {
+    if (this.kind === 'human') return new HumanCharacter(this.human, this.humanClips, id, name, quality);
     if (this.ready) return new SoldierCharacter(this, id, name, quality);
     return new ProceduralCharacter(id, name, quality);
   }

@@ -117,3 +117,69 @@ test('crushing is reported as its own weapon type', () => {
   assert.ok(CRUSH.baseDamage + CRUSH.speedDamage * 10 > 100);
   assert.ok(VOXEL > 0);
 });
+
+test('a rocket blast breaks nearby props, clears their collision and tells clients', () => {
+  const room = { players: new Map(), settings: { rotation: true }, hostId: 0 };
+  const g = new Game(room);
+  g.loadMap('harbor', 7);
+  const solid = g.props.find((p) => p.cells.length > 0);
+  assert.ok(solid, 'map has solid props with ghost collision');
+  for (const i of solid.cells) assert.ok(g.world.ghost[g.world.data[i]], 'ghost voxel present before the blast');
+  g.broadcast.length = 0;
+  const [cx, cy, cz] = solid.center;
+  g.checkProps(cx * VOXEL, (cy + 0.5) * VOXEL, cz * VOXEL);
+  assert.equal(solid.alive, false);
+  for (const i of solid.cells) assert.equal(g.world.data[i], 0, 'collision removed with the prop');
+  const ev = g.broadcast.find((e) => e.t === 'props');
+  assert.ok(ev && ev.gone.includes(solid.id));
+  // late joiners get the prop marked dead in the map payload
+  assert.ok(g.buildMapPayload().props.find((p) => p.id === solid.id).dead);
+});
+
+test('a building whose ground-floor walls are shot away comes down, a damaged one stays up', async () => {
+  const { generateMap } = await import('../shared/maps.js');
+  for (const name of ['skyline', 'harbor', 'downtown']) {
+    const w = generateMap(name, 7).world;
+    const st = w.structures.filter((s) => s.ratio0).sort((a, b) => (b.x1 - b.x0) * (b.z1 - b.z0) - (a.x1 - a.x0) * (a.z1 - a.z0))[0];
+    const wallBand = (keep) => {
+      const removed = [];
+      for (let y = st.y0; y < st.y0 + st.fh - 1; y++) for (let z = st.z0; z <= st.z1; z++) for (let x = st.x0; x <= st.x1; x++) {
+        const edge = x === st.x0 || x === st.x1 || z === st.z0 || z === st.z1;
+        if (!edge || !keep(x, z)) continue;
+        const i = w.index(x, y, z);
+        if (w.data[i] && !w.ghost[w.data[i]]) { w.setIndex(i, AIR); removed.push(i); }
+      }
+      return removed;
+    };
+    // one side of the ground floor gone: still standing
+    let removed = wallBand((x, z) => z === st.z0);
+    assert.equal(w.findWeakStructures(removed).length, 0, `${name}: one wall down should not collapse it`);
+    // every outer wall of the ground floor gone (stairs and the inner column remain): it collapses
+    removed = removed.concat(wallBand(() => true));
+    const res = w.findWeakStructures(removed);
+    assert.ok(res.length >= 1, `${name}: building on its stairs should collapse`);
+    const fall = res.reduce((n, r) => n + r.fall.length, 0);
+    assert.ok(fall > 500, `${name}: upper floors fall (${fall} voxels)`);
+  }
+});
+
+test('intact maps have no structure that is already too weak', async () => {
+  const { generateMap } = await import('../shared/maps.js');
+  for (const name of ['skyline', 'harbor', 'downtown']) {
+    const w = generateMap(name, 3).world;
+    for (const st of w.structures) {
+      const touch = [w.index(st.x0, st.y0, st.z0)];
+      assert.equal(w.findWeakStructures(touch).length, 0, `${name} structure at ${st.x0},${st.z0}`);
+    }
+  }
+});
+
+test('fresh maps have nothing hanging in the air', async () => {
+  const { generateMap } = await import('../shared/maps.js');
+  for (const name of ['skyline', 'harbor', 'downtown']) {
+    const w = generateMap(name, 11).world;
+    const all = [];
+    for (let i = 0; i < w.size; i++) { const v = w.data[i]; if (v && !w.ghost[v]) all.push(i); }
+    assert.equal(w.findFloatingClusters(all).length, 0, `${name} has floating pieces`);
+  }
+});

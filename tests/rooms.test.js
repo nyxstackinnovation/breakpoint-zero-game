@@ -52,11 +52,11 @@ test('private rooms: codes, host-only controls, kicking and host migration', () 
   mgr.join(third, 'Third', room.code);
   assert.equal(room.humans().length, 3);
   // guests cannot change settings or start
-  room.hostAction(guest.player, { action: 'settings', settings: { map: 'quarry' } });
+  room.hostAction(guest.player, { action: 'settings', settings: { map: 'downtown' } });
   assert.equal(room.settings.map, 'skyline');
   assert.match(guest.last('error').msg, /host/i);
-  room.hostAction(host.player, { action: 'settings', settings: { map: 'quarry', bots: 2, difficulty: 'hard', rotation: false } });
-  assert.deepEqual(room.settings, { map: 'quarry', bots: 2, difficulty: 'hard', rotation: false });
+  room.hostAction(host.player, { action: 'settings', settings: { map: 'downtown', bots: 2, difficulty: 'hard', rotation: false } });
+  assert.deepEqual(room.settings, { map: 'downtown', bots: 2, difficulty: 'hard', rotation: false });
   // kick
   room.hostAction(host.player, { action: 'kick', id: third.player.id });
   assert.ok(third.last('kicked'));
@@ -64,7 +64,7 @@ test('private rooms: codes, host-only controls, kicking and host migration', () 
   // start
   room.hostAction(host.player, { action: 'start' });
   assert.equal(room.state, 'game');
-  assert.equal(room.game.mapName, 'quarry');
+  assert.equal(room.game.mapName, 'downtown');
   assert.equal(room.bots().length, 2);
   assert.ok(guest.last('map'));
   // host leaves -> guest becomes host
@@ -115,4 +115,33 @@ test('names are sanitised and made unique', () => {
   mgr.join(b, '<b>Ace</b>', room.code);
   assert.equal(a.player.name, 'bAceb');
   assert.notEqual(a.player.name, b.player.name);
+});
+
+test('quick match keeps players with the bot skill they picked', () => {
+  const mgr = new RoomManager();
+  const easy = mgr.quickMatch(fakeConn(), 'E1', 'easy');
+  const hard = mgr.quickMatch(fakeConn(), 'H1', 'hard');
+  assert.notEqual(easy, hard);
+  assert.equal(hard.settings.difficulty, 'hard');
+  assert.ok(hard.bots().every((b) => b.brain.difficultyName === 'hard'));
+  assert.equal(mgr.quickMatch(fakeConn(), 'H2', 'hard'), hard, 'second hard player joins the hard room');
+  assert.equal(mgr.quickMatch(fakeConn(), 'E2', 'nonsense'), easy, 'unknown skill falls back to easy');
+  for (const r of mgr.rooms.values()) r.game = null;
+});
+
+test('quick match puts players on the map they picked and keeps it there', () => {
+  const mgr = new RoomManager();
+  const harbor = mgr.quickMatch(fakeConn(), 'A', 'easy', 'harbor');
+  assert.equal(harbor.settings.map, 'harbor');
+  assert.equal(harbor.settings.rotation, false);
+  assert.equal(harbor.game.mapName, 'harbor');
+  assert.equal(harbor.game.nextMapName(), 'harbor', 'a picked map does not rotate away');
+  const downtown = mgr.quickMatch(fakeConn(), 'B', 'easy', 'downtown');
+  assert.notEqual(downtown, harbor);
+  assert.equal(mgr.quickMatch(fakeConn(), 'C', 'easy', 'harbor'), harbor, 'same map, same room');
+  assert.equal(mgr.quickMatch(fakeConn(), 'D', 'hard', 'harbor') === harbor, false, 'skill still separates rooms');
+  const any = mgr.quickMatch(fakeConn(), 'E', 'easy', 'any');
+  assert.equal(any, harbor, '"any" joins the busiest room');
+  assert.equal(mgr.quickMatch(fakeConn(), 'F', 'easy', 'mars').settings.quickMap !== 'mars', true, 'unknown map means any');
+  for (const r of mgr.rooms.values()) r.game = null;
 });

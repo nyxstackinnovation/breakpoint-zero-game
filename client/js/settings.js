@@ -1,6 +1,18 @@
 // Persistent user settings (localStorage, with safe fallbacks).
 
 const KEY = 'bpz.settings.v1';
+
+// Integrated / software GPUs start on Low; everyone else on Medium. Players can change it in Settings.
+function defaultQuality() {
+  try {
+    const gl = document.createElement('canvas').getContext('webgl2');
+    const ext = gl && gl.getExtension('WEBGL_debug_renderer_info');
+    const name = ext ? String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL)) : '';
+    gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    if (/intel|uhd|iris|swiftshader|llvmpipe|mali|adreno|powervr|apple gpu/i.test(name) && !/arc/i.test(name)) return 'low';
+  } catch { /* ignore */ }
+  return 'medium';
+}
 const DEFAULTS = {
   name: '',
   sensitivity: 1.0,
@@ -11,6 +23,8 @@ const DEFAULTS = {
   showNames: true,
   showFps: false,
   shake: true,
+  botSkill: 'easy',   // Quick Match bot difficulty
+  quickMap: 'any',    // Quick Match map ('any' = rotation)
 };
 
 function load() {
@@ -18,7 +32,7 @@ function load() {
     const raw = localStorage.getItem(KEY);
     if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
   } catch { /* storage unavailable */ }
-  return { ...DEFAULTS };
+  return { ...DEFAULTS, quality: defaultQuality() };
 }
 
 class Settings {
@@ -38,7 +52,8 @@ class Settings {
 export const settings = new Settings();
 
 export const QUALITY = {
-  low: { pixelRatio: 0.75, shadows: false, shadowSize: 0, particles: 0.5, debris: 300, antialias: false, characterShadows: false },
-  medium: { pixelRatio: 1, shadows: true, shadowSize: 1024, particles: 0.8, debris: 700, antialias: false, characterShadows: true },
-  high: { pixelRatio: 2, shadows: true, shadowSize: 2048, particles: 1, debris: 1200, antialias: true, characterShadows: true },
+  // shadowEvery: re-render the shadow map every N frames; lights: dynamic muzzle/explosion lights
+  low: { pixelRatio: 0.85, shadows: false, shadowSize: 0, particles: 0.5, debris: 250, antialias: false, characterShadows: false, shadowEvery: 0, lights: 0 },
+  medium: { pixelRatio: 1, shadows: true, shadowSize: 1024, particles: 0.75, debris: 500, antialias: false, characterShadows: true, shadowEvery: 2, lights: 1 },
+  high: { pixelRatio: 1.5, shadows: true, shadowSize: 2048, particles: 1, debris: 1000, antialias: true, characterShadows: true, shadowEvery: 1, lights: 3 },
 };

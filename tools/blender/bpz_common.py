@@ -46,6 +46,11 @@ def clear_scene():
                     coll.remove(block)
                 except Exception:
                     pass
+    for a in list(bpy.data.actions):
+        try:
+            bpy.data.actions.remove(a, do_unlink=True)
+        except Exception:
+            pass
     for c in list(bpy.data.collections):
         bpy.data.collections.remove(c)
 
@@ -105,7 +110,32 @@ def material(name, color, rough=0.7, metal=0.0, emission=None, alpha=1.0):
     return m
 
 
+def tinted_image(base, color, name):
+    """Copy of `base` multiplied by an sRGB colour, so the tint survives glTF export."""
+    w, h = base.size
+    px = [0.0] * (w * h * 4)
+    base.pixels.foreach_get(px)
+    # byte images store sRGB values, so multiply by the sRGB tint
+    c = (((color >> 16) & 255) / 255.0 * 1.12, ((color >> 8) & 255) / 255.0 * 1.12, (color & 255) / 255.0 * 1.12)
+    for i in range(0, len(px), 4):
+        px[i] = min(1.0, px[i] * c[0])
+        px[i + 1] = min(1.0, px[i + 1] * c[1])
+        px[i + 2] = min(1.0, px[i + 2] * c[2])
+    img = bpy.data.images.get(name)
+    if img:
+        bpy.data.images.remove(img)
+    img = bpy.data.images.new(name, w, h, alpha=False)
+    img.pixels.foreach_set(px)
+    try:
+        img.pack()
+    except Exception:
+        pass
+    return img
+
+
 def material_with_image(name, color, image, rough=0.8, metal=0.0):
+    if image is not None:
+        image = tinted_image(image, color, name + 'Tex')
     m = material(name, color, rough, metal)
     nt = m.node_tree
     bsdf = [n for n in nt.nodes if n.type == 'BSDF_PRINCIPLED'][0]

@@ -55,8 +55,14 @@ function serveStatic(req, res) {
     fs.stat(file, (err, st) => {
       if (err || !st.isFile()) { res.writeHead(404, { 'content-type': 'text/plain' }); res.end('Not found'); return; }
       const ext = path.extname(file).toLowerCase();
-      const cache = ext === '.glb' || prefix === '/vendor/three/' ? 'public, max-age=86400' : 'no-cache';
-      res.writeHead(200, { 'content-type': MIME[ext] || 'application/octet-stream', 'content-length': st.size, 'cache-control': cache });
+      // Game files (code, models, sounds) change whenever the game is updated or the Blender assets are
+      // rebuilt, so the browser must always check: an old cached props.glb drew the new cars and trees as
+      // tiny boxes while their full-size collision stayed (invisible walls). Unchanged files cost a 304.
+      const cache = prefix === '/vendor/three/' ? 'public, max-age=86400' : 'no-cache';
+      const etag = `W/"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`;
+      const headers = { 'content-type': MIME[ext] || 'application/octet-stream', 'cache-control': cache, etag, 'last-modified': st.mtime.toUTCString() };
+      if (req.headers['if-none-match'] === etag) { res.writeHead(304, headers); res.end(); return; }
+      res.writeHead(200, { ...headers, 'content-length': st.size });
       fs.createReadStream(file).pipe(res);
     });
     return;
@@ -124,12 +130,13 @@ export function createServer({ port = Number(process.env.PORT) || 3001, host = p
     acc += now - last;
     last = now;
     let steps = 0;
-    while (acc >= stepMs && steps < 6) {
+    // catch up after a stall of up to 0.25 s instead of silently losing that time
+    while (acc >= stepMs && steps < 15) {
       try { manager.update(); } catch (e) { console.error('tick error', e); }
       acc -= stepMs;
       steps++;
     }
-    if (acc > stepMs * 6) acc = 0;
+    if (acc > stepMs * 15) acc = 0;
     setTimeout(loop, Math.max(1, stepMs - acc - 0.5));
   };
   setTimeout(loop, stepMs);
@@ -161,7 +168,7 @@ function handleMessage(manager, conn, msg) {
       break;
     case 'quick':
       conn.name = sanitizeName(msg.name ?? conn.name);
-      manager.quickMatch(conn, conn.name);
+      manager.quickMatch(conn, conn.name, typeof msg.difficulty === 'string' ? msg.difficulty : 'easy', typeof msg.map === 'string' ? msg.map : 'any');
       break;
     case 'create':
       conn.name = sanitizeName(msg.name ?? conn.name);
@@ -190,6 +197,29 @@ function handleMessage(manager, conn, msg) {
     case 'ping':
       conn.send({ t: 'pong', c: msg.c });
       break;
+    case 'dev': {
+      // test hooks, only when the server is started with BPZ_DEV=1 (never in normal play)
+      if (process.env.BPZ_DEV !== '1' || !conn.room || !conn.room.game) break;
+      const g = conn.room.game;
+      if (!g.devLog) {
+        // record who changes every voxel from now on
+        g.devLog = new Map();
+        const w = g.world, tag = (i, why) => { const l = g.devLog.get(i) || []; l.push(`${why}@${g.tick}`); g.devLog.set(i, l); };
+        const ex = w.extract.bind(w); w.extract = (idx) => { for (const i of idx) tag(i, 'extract' + idx.length); return ex(idx); };
+        const si = w.setIndex.bind(w); w.setIndex = (i, v) => { tag(i, `set${v}from${w.data[i]}g${w.ghost[w.data[i]]}:${new Error().stack.split('\n')[2].trim().slice(0, 60)}`); return si(i, v); };
+        const em = g.emit.bind(g); g.emit = (ev) => { if (ev.t === 'boom' || ev.t === 'drop') g.devLog.set('ev' + g.tick, (g.devLog.get('ev' + g.tick) || 0) + 1); em(ev); };
+      }
+      if (msg.trace) conn.send({ t: 'devtrace', log: msg.trace.map((i) => `${i}: ${(g.devLog.get(i) || []).join(' ')}`) });
+      if (Array.isArray(msg.boom)) g.explode(msg.boom[0], msg.boom[1], msg.boom[2], conn.player ? conn.player.id : 0, null, 0);
+      if (msg.report) {
+        const w = g.world, all = [];
+        for (let i = 0; i < w.size; i++) { const v = w.data[i]; if (v && !w.ghost[v]) all.push(i); }
+        let sum = 0; for (let i = 0; i < w.size; i++) sum = (sum * 31 + w.data[i]) >>> 0;
+        if (msg.dump) conn.send({ t: 'devdump', data: Buffer.from(w.data).toString('base64') });
+        conn.send({ t: 'devreport', floating: w.findFloatingClusters(all).map((c) => c.length), clusters: g.clusters.length, hash: sum });
+      }
+      break;
+    }
     default:
       break;
   }

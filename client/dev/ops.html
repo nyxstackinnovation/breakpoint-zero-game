@@ -1,0 +1,54 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Operators</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#7d8fa3}</style>
+<script type="importmap">{ "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }</script>
+</head><body>
+<script type="module">
+// Dev lineup of the five operators: /dev/ops.html?anim=Idle&t=0&yaw=0&y=1&dist=6&only=Viper&fov=30
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { clone } from 'three/addons/utils/SkeletonUtils.js';
+const q = new URLSearchParams(location.search);
+const r = new THREE.WebGLRenderer({ antialias: true });
+r.setSize(innerWidth, innerHeight); r.outputColorSpace = THREE.SRGBColorSpace; r.toneMapping = THREE.ACESFilmicToneMapping; r.toneMappingExposure = 1.1;
+r.shadowMap.enabled = true;
+document.body.appendChild(r.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fa6bf);
+const pm = new THREE.PMREMGenerator(r);
+scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture; scene.environmentIntensity = 0.5;
+scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x6a5a4a, 1.2));
+scene.add(new THREE.AmbientLight(0xffffff, 0.4));
+const sun = new THREE.DirectionalLight(0xffffff, 2.4); sun.position.set(2, 6, 5); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -6, right: 6, top: 6, bottom: -6 }); scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(40, 40), new THREE.MeshLambertMaterial({ color: 0x9a9a9a }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+const gltf = await new GLTFLoader().loadAsync('/assets/models/' + (q.get('file') || 'operators.glb'));
+const faces = await new THREE.TextureLoader().loadAsync('/assets/textures/faces.png').catch(() => null);
+if (faces) { faces.flipY = false; faces.colorSpace = q.get("lin") ? THREE.NoColorSpace : THREE.SRGBColorSpace; faces.anisotropy = 4; }
+gltf.scene.traverse((o) => { if (o.isMesh && o.material.name === 'Operator' && faces) { o.material.map = faces; o.material.needsUpdate = true; } });
+const names = ['Viper', 'Ranger', 'Nova', 'Ghost', 'Blaze'].filter((n) => !q.get('only') || q.get('only').split(',').includes(n));
+const yaw = Number(q.get('yaw') || 0);
+const mixers = [];
+names.forEach((n, i) => {
+  const m = clone(gltf.scene);
+  const drop = []; m.traverse((o) => { if (/^Op_/.test(o.name) && o.name !== 'Op_' + n && /^Op_[A-Za-z]+$/.test(o.name)) drop.push(o); });
+  for (const o of drop) o.parent.remove(o);
+  m.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; if (o.material.name === 'TeamAccent') { o.material = o.material.clone(); o.material.color.setHSL(i / 5, 0.8, 0.5); } } });
+  const l = m.getObjectByName('Launcher3P'); if (l) l.visible = false;
+  m.position.x = (i - (names.length - 1) / 2) * 1.1;
+  m.rotation.y = Math.PI + yaw;
+  scene.add(m);
+  const mixer = new THREE.AnimationMixer(m);
+  const clip = gltf.animations.find((a) => a.name === (q.get('anim') || 'Idle'));
+  if (clip) { mixer.clipAction(clip).play(); mixer.setTime(Number(q.get('t') || 0) * clip.duration); }
+  mixers.push(mixer);
+});
+const cam = new THREE.PerspectiveCamera(Number(q.get('fov') || 30), innerWidth / innerHeight, 0.01, 200);
+const y = Number(q.get('y') || 1.0), dist = Number(q.get('dist') || 7.5), elev = Number(q.get('elev') || 0.05);
+cam.position.set(Number(q.get('tx') || 0), y + dist * elev, dist);
+cam.lookAt(Number(q.get('tx') || 0), y, 0);
+r.render(scene, cam);
+window.ready = true;
+</script></body></html>

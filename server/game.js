@@ -13,9 +13,14 @@ import { createWeaponState, resetWeapons, stepWeapons, shotSpread, addBloom, app
 import { encodeSnapshot, PF } from '../shared/protocol.js';
 import { dirFromYawPitch, bytesToBase64, int32ToBase64 } from '../shared/util.js';
 import { nearestStandable } from './nav.js';
+import { propIndices } from '../shared/props.js';
 
 const MAX_QUEUED_INPUTS = 120;
-const INPUT_BUDGET_CAP = 12;
+// Each player may apply one input per tick of REAL time, with up to half a second of catch-up.
+// Counting real time (not server ticks) matters when the server itself stutters, e.g. when the game and
+// the server share a busy laptop: otherwise every hitch leaves inputs queued for good, latency climbs and
+// the queue finally overflows, so moves get dropped and the player snaps to a different spot.
+const INPUT_BUDGET_CAP = 30;
 
 export function createPlayer(id, name, isBot, conn = null) {
   return {
@@ -81,6 +86,8 @@ export class Game {
     this.mapName = null;
     this.rotationIndex = 0;
     this.stats = { kills: 0, rockets: 0, booms: 0, voxelsDestroyed: 0, collapses: 0, crushKills: 0 };
+    this.clock = null;      // () => ms; set by the room so input budgets follow real time
+    this.lastClock = null;
   }
 
   // ------------------------------------------------------------ map / round flow
@@ -94,6 +101,7 @@ export class Game {
     if (ri >= 0) this.rotationIndex = ri;
     this.rockets = [];
     this.clusters = [];
+    this.props = (m.props || []).map((p, i) => ({ ...p, id: i, alive: true, ...propIndices(m.world, p) }));
     this.state = 'playing';
     this.roundEndTick = this.tick + ROUND_SECONDS * TICK_RATE;
     this.mapPayload = null;
@@ -138,6 +146,9 @@ export class Game {
       size: [w.sx, w.sy, w.sz],
       palette: Array.from(w.palette.subarray(0, 256)),
       hard: Array.from(w.hard),
+      mat: Array.from(w.material),
+      ghost: Array.from(w.ghost),
+      props: (this.props || []).map((p) => ({ t: p.t, x: p.x, y: p.y, z: p.z, r: p.r, id: p.id, dead: !p.alive })),
       grid: bytesToBase64(w.encodeRLE()),
       theme: this.map.theme,
       tick: this.tick,
@@ -251,10 +262,16 @@ export class Game {
 
   update() {
     this.tick++;
+    let gain = 1;
+    if (this.clock) {
+      const now = this.clock();
+      gain = this.lastClock === null ? 1 : Math.min(INPUT_BUDGET_CAP, Math.max(0, (now - this.lastClock) * TICK_RATE / 1000));
+      this.lastClock = now;
+    }
     if (this.state === 'playing') {
       for (const p of this.players.values()) {
         if (p.brain) p.inputQueue.push(p.brain.think(this.tick));
-        p.inputBudget = Math.min(INPUT_BUDGET_CAP, p.inputBudget + 1);
+        p.inputBudget = Math.min(INPUT_BUDGET_CAP, p.inputBudget + (p.brain ? 1 : gain));
         while (p.inputQueue.length && p.inputBudget >= 1) {
           p.inputBudget -= 1;
           this.processInput(p, p.inputQueue.shift());
@@ -438,11 +455,21 @@ export class Game {
     this.stats.voxelsDestroyed += removed.length;
     const clusterEvents = [];
     if (removed.length) {
-      const floating = w.findFloatingClusters(removed);
-      for (const idx of floating) {
-        const colors = w.extract(idx);
+      // pieces cut off from the ground fall; then buildings left standing on too little (stairs, one
+      // column, a sky bridge) come down too
+      const drops = [];
+      for (const idx of w.findFloatingClusters(removed)) drops.push([idx, w.extract(idx)]);
+      for (const { fall, crush } of w.findWeakStructures(removed)) {
+        if (crush.length) drops.push([crush, w.extract(crush), true]);
+        if (fall.length) drops.push([fall, w.extract(fall)]);
+      }
+      // blocks left dangling off a wall around the crater crumble too
+      const r = Math.ceil(rv) + 3;
+      const dang = w.findDangling(cx - r, cy - r, cz - r, cx + r, cy + r, cz + r);
+      if (dang.length) { const idx = Int32Array.from(dang); drops.push([idx, w.extract(idx), true]); }
+      for (const [idx, colors, crumble] of drops) {
         const id = this.nextClusterId++;
-        if (idx.length < CRUSH.minClusterForFall) {
+        if (crumble || idx.length < CRUSH.minClusterForFall) {
           clusterEvents.push({ id, i: int32ToBase64(idx), d: 1 });
           this.stats.voxelsDestroyed += idx.length;
           continue;
@@ -454,6 +481,30 @@ export class Game {
       }
     }
     this.emit({ t: 'boom', id: this.nextBoomId++, r: rocketId, owner: ownerId, p: [r3(x), r3(y), r3(z)], c: [cx, cy, cz], rv, cl: clusterEvents, n: removed.length });
+    this.checkProps(x, y, z);
+  }
+
+  // Props break when a blast goes off next to them, or when their voxels / the ground under them are removed.
+  // Their invisible collision voxels are cleared on every machine via the 'props' event.
+  checkProps(ex, ey, ez) {
+    if (!this.props || !this.props.length) return;
+    const w = this.world;
+    const gone = [];
+    for (const p of this.props) {
+      if (!p.alive) continue;
+      let broken = false;
+      if (ex !== undefined) {
+        const d = Math.hypot(p.center[0] * VOXEL - ex, (p.center[1] + 0.5) * VOXEL - ey, p.center[2] * VOXEL - ez);
+        if (d < 2.6) broken = true;
+      }
+      if (!broken) for (const i of p.cells) if (!w.ghost[w.data[i]]) { broken = true; break; }
+      if (!broken) for (const i of p.ground) if (w.data[i] === 0) { broken = true; break; }
+      if (!broken) continue;
+      p.alive = false;
+      for (const i of p.cells) if (w.ghost[w.data[i]]) w.setIndex(i, 0);
+      gone.push(p.id);
+    }
+    if (gone.length) { w.revision++; this.emit({ t: 'props', gone }); }
   }
 
   updateClusters() {
@@ -484,8 +535,23 @@ export class Game {
         }
       }
       if (landed) {
-        c.settle(w);
+        const placed = c.settle(w);
         this.emit({ t: 'settle', id: c.id, d: c.drop });
+        // what is left after the impact may hang in the air (holes from shattering, landing on one edge):
+        // loose bits crumble, bigger loose pieces fall again
+        const cl = [];
+        for (const idx of w.findFloatingClusters(placed)) {
+          const colors = w.extract(idx);
+          const id = this.nextClusterId++;
+          if (idx.length < CRUSH.minClusterForFall) { cl.push({ id, i: int32ToBase64(idx), d: 1 }); continue; }
+          this.clusters.push(new FallingCluster(id, w, idx, colors, c.owner));
+          cl.push({ id, i: int32ToBase64(idx) });
+        }
+        // and bits left dangling off the pile by one face crumble
+        const dang = w.findDangling(c.min[0] - 1, c.min[1] - c.drop - 1, c.min[2] - 1, c.max[0] + 1, c.max[1] - c.drop + 1, c.max[2] + 1);
+        if (dang.length) { const idx = Int32Array.from(dang); w.extract(idx); cl.push({ id: this.nextClusterId++, i: int32ToBase64(idx), d: 1 }); }
+        if (cl.length) this.emit({ t: 'drop', owner: c.owner, cl });
+        this.checkProps();
         // free anyone the rubble landed on
         for (const q of this.players.values()) if (q.state === 'alive' && overlapsAt(w, q.move.x, q.move.y, q.move.z)) q.move.vy = Math.max(q.move.vy, 0);
       }
@@ -498,6 +564,7 @@ export class Game {
   damage(q, amount, attacker, weapon, head, from) {
     if (q.state !== 'alive' || this.state !== 'playing') return;
     if (this.tick < q.protectUntil) return;
+    if (attacker && attacker.isBot && attacker.brain && attacker !== q) amount *= attacker.brain.d.damage ?? 1;
     amount = Math.max(1, Math.round(amount));
     q.health -= amount;
     if (attacker && attacker !== q) { q.lastDamager = attacker.id; q.lastDamageTick = this.tick; }

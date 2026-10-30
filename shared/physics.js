@@ -102,7 +102,7 @@ function moveAxisSub(s, world, axis, d) {
 }
 
 // Horizontal move with automatic step-up onto one-voxel ledges.
-function moveHorizontal(s, world, axis, d, canStep) {
+function moveHorizontal(s, world, axis, d, canStep, stepH = PLAYER.stepHeight) {
   if (d === 0) return false;
   const bx = s.x, by = s.y, bz = s.z;
   const blocked = moveAxisSub(s, world, axis, d);
@@ -110,12 +110,11 @@ function moveHorizontal(s, world, axis, d, canStep) {
   const px = s.x, py = s.y, pz = s.z;
   const blockedProgress = axis === 0 ? Math.abs(px - bx) : Math.abs(pz - bz);
   s.x = bx; s.y = by; s.z = bz;
-  const stepH = PLAYER.stepHeight;
   if (!overlapsAt(world, bx, by + stepH, bz)) {
     s.y = by + stepH;
     const b2 = moveAxisSub(s, world, axis, d);
     const progress = axis === 0 ? Math.abs(s.x - bx) : Math.abs(s.z - bz);
-    if (progress > blockedProgress + 0.01) {
+    if (progress > blockedProgress + Math.min(0.01, Math.abs(d) * 0.5)) {
       moveAxisSub(s, world, 1, -stepH);
       return b2;
     }
@@ -201,9 +200,14 @@ export function stepPlayer(s, buttons, yaw, world, dt) {
   s.vy -= PLAYER.gravity * dt;
   if (s.vy < -PLAYER.maxFallSpeed) s.vy = -PLAYER.maxFallSpeed;
 
-  const canStep = wasGround && !jumped;
-  if (moveHorizontal(s, world, 0, s.vx * dt, canStep)) s.vx = 0;
-  if (moveHorizontal(s, world, 2, s.vz * dt, canStep)) s.vz = 0;
+  // on the ground: walk up one-voxel steps. In the air (jump apex or falling): pull up over a ledge that is
+  // at most ~0.6 m above the feet, so every crater, trench, pit or quay wall you can jump to is escapable.
+  const groundStep = wasGround && !jumped;
+  const mantle = !wasGround && s.vy < 2.5;
+  const canStep = groundStep || mantle;
+  const stepH = groundStep ? PLAYER.stepHeight : PLAYER.mantleHeight;
+  if (moveHorizontal(s, world, 0, s.vx * dt, canStep, stepH)) s.vx = 0;
+  if (moveHorizontal(s, world, 2, s.vz * dt, canStep, stepH)) s.vz = 0;
 
   const blockedY = moveAxisSub(s, world, 1, s.vy * dt);
   if (blockedY) {

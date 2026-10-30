@@ -33,6 +33,31 @@ def M():
         'umbrella2': material('UmbrellaFabric2', 0xffffff, rough=0.8),
         'rubber': material('PropRubber', 0x1a1a1a, rough=0.95),
         'glass': material('PropGlass', 0x88b6d0, rough=0.1, alpha=0.5),
+        'bark': material('Bark', 0x5a4030, rough=1.0),
+        'palmBark': material('PalmBark', 0x8a7556, rough=1.0),
+        'oak1': material('OakLeaf', 0x4c8a35, rough=0.9),
+        'oak2': material('OakLeaf2', 0x3a7430, rough=0.9),
+        'oak3': material('OakLeaf3', 0x5f9c3f, rough=0.9),
+        'pine': material('PineNeedles', 0x2c5530, rough=0.95),
+        'pine2': material('PineNeedles2', 0x37663a, rough=0.95),
+        'palm': material('PalmFrond', 0x5a9640, rough=0.85),
+        'palm2': material('PalmFrond2', 0x477d33, rough=0.85),
+        'rock': material('Rock', 0x8d8579, rough=1.0),
+        'rock2': material('RockDark', 0x6f685e, rough=1.0),
+        'carGlass': material('CarGlass', 0x1d2730, rough=0.08, metal=0.5),
+        'chrome': material('Chrome', 0xc4c8cc, rough=0.2, metal=0.95),
+        'tire': material('Tire', 0x161616, rough=0.9),
+        'rim': material('Rim', 0x9a9ea4, rough=0.35, metal=0.8),
+        'tail': material('TailLight', 0xb0141a, rough=0.3, emission=0x5a0006),
+        'head': material('HeadLight', 0xf4f1e6, rough=0.1, emission=0x8a8676),
+        'plate': material('Plate', 0xf0f0e8, rough=0.6),
+        'signalRed': material('SignalRed', 0xff2a1a, rough=0.3, emission=0xff2a1a),
+        'signalAmber': material('SignalAmber', 0x553a10, rough=0.4),
+        'signalGreen': material('SignalGreen', 0x103a1c, rough=0.4),
+        'dumpster': material('DumpsterGreen', 0x2f5a3c, rough=0.55, metal=0.3),
+        'forklift': material('ForkliftYellow', 0xf0b323, rough=0.5, metal=0.2),
+        'pole': material('PoleWood', 0x5d4630, rough=1.0),
+        'ceramic': material('Insulator', 0xd8e2e6, rough=0.3),
     }
 
 
@@ -277,8 +302,260 @@ def tire_stack(m):
     return join(p, 'TireStack')
 
 
+# ------------------------------------------------------------------ realistic set dressing (Blender-only)
+
+def leaf_cluster(name, r, loc, mat, seed, squash=0.8, detail=2):
+    """Irregular leaf mass: a displaced icosphere, flattened a little."""
+    bm = bmesh.new()
+    bmesh.ops.create_icosphere(bm, subdivisions=detail, radius=r)
+    rnd = random.Random(seed)
+    for v in bm.verts:
+        n = v.co.normalized()
+        bump = 0.75 + 0.5 * rnd.random() + 0.15 * math.sin(n.x * 9 + seed) * math.cos(n.y * 7 - seed)
+        v.co = Vector((v.co.x * bump, v.co.y * bump, v.co.z * bump * squash))
+    me = bpy.data.meshes.new(name)
+    bm.to_mesh(me)
+    bm.free()
+    ob = new_object(name, me)
+    me.materials.append(mat)
+    ob.location = loc
+    return ob
+
+
+def limb(name, a, b, r1, r2, mat, segs=8):
+    a, b = Vector(a), Vector(b)
+    d = b - a
+    ob = cylinder(name, r1, r2, d.length, (a + b) / 2, mat=mat, segs=segs)
+    ob.rotation_euler = d.to_track_quat('Z', 'Y').to_euler()
+    return ob
+
+
+def oak_tree(m):
+    rnd = random.Random(11)
+    p = [cylinder('trunk', 0.22, 0.14, 3.0, (0, 0, 1.5), mat=m['bark'], segs=10),
+         cylinder('flare', 0.32, 0.22, 0.35, (0, 0, 0.17), mat=m['bark'], segs=10)]
+    tips = []
+    for i in range(5):
+        a = i * 2 * math.pi / 5 + rnd.uniform(-0.3, 0.3)
+        base = (0, 0, 2.2 + rnd.uniform(-0.3, 0.5))
+        tip = (math.cos(a) * rnd.uniform(1.0, 1.5), math.sin(a) * rnd.uniform(1.0, 1.5), base[2] + rnd.uniform(1.0, 1.6))
+        p.append(limb(f'branch{i}', base, tip, 0.1, 0.04, m['bark'], segs=6))
+        tips.append(tip)
+    leaves = [m['oak1'], m['oak2'], m['oak3']]
+    for i, t in enumerate(tips):
+        p.append(leaf_cluster(f'crown{i}', rnd.uniform(1.0, 1.3), (t[0], t[1], t[2] + 0.2), leaves[i % 3], seed=i + 3))
+    p.append(leaf_cluster('crownTop', 1.5, (0, 0, 4.6), m['oak1'], seed=21))
+    p.append(leaf_cluster('crownMid', 1.3, (0.2, -0.3, 3.8), m['oak2'], seed=22))
+    return join(p, 'OakTree')
+
+
+def pine_tree(m):
+    rnd = random.Random(5)
+    p = [cylinder('trunk', 0.2, 0.06, 6.5, (0, 0, 3.25), mat=m['bark'], segs=10)]
+    tiers = 6
+    for i in range(tiers):
+        t = i / (tiers - 1)
+        r = 1.9 * (1 - t) + 0.35
+        z = 1.4 + t * 5.0
+        c = cylinder(f'tier{i}', r, 0.05, 1.7 - t * 0.5, (rnd.uniform(-0.05, 0.05), rnd.uniform(-0.05, 0.05), z), mat=m['pine'] if i % 2 else m['pine2'], segs=14)
+        # ragged edge
+        for v in c.data.vertices:
+            if v.co.z < 0:
+                f = 0.85 + 0.3 * rnd.random()
+                v.co.x *= f
+                v.co.y *= f
+                v.co.z -= 0.15 * rnd.random()
+        p.append(c)
+    return join(p, 'PineTree')
+
+
+def palm_tree(m):
+    rnd = random.Random(8)
+    p = []
+    pts = []
+    for i in range(9):
+        t = i / 8
+        pts.append(Vector((0.9 * t * t, 0.2 * t * t, t * 6.4)))
+    for i in range(8):
+        r1 = 0.2 - 0.07 * i / 8
+        p.append(limb(f'seg{i}', pts[i], pts[i + 1], r1 + 0.015, r1, m['palmBark'], segs=10))
+        p.append(cylinder(f'ring{i}', r1 + 0.03, r1 + 0.03, 0.06, tuple(pts[i] + (pts[i + 1] - pts[i]) * 0.9), mat=m['palmBark'], segs=10))
+    top = pts[-1]
+    for i in range(9):
+        a = i * 2 * math.pi / 9 + rnd.uniform(-0.15, 0.15)
+        # each frond: a chain of thin flattened leaves drooping outward
+        prev = top
+        for k in range(4):
+            t = (k + 1) / 4
+            nxt = top + Vector((math.cos(a) * 2.6 * t, math.sin(a) * 2.6 * t, 0.5 * t - 1.6 * t * t))
+            d = nxt - prev
+            leaf = box(f'frond{i}_{k}', (0.55 * (1 - 0.5 * t), d.length + 0.08, 0.03), tuple((prev + nxt) / 2), mat=m['palm'] if i % 2 else m['palm2'])
+            leaf.rotation_euler = d.to_track_quat('Y', 'Z').to_euler()
+            p.append(leaf)
+            prev = nxt
+    for i in range(4):
+        a = i * math.pi / 2
+        p.append(sphere(f'coconut{i}', 0.11, tuple(top + Vector((math.cos(a) * 0.18, math.sin(a) * 0.18, -0.15))), mat=m['woodDark'], segs=10, rings=8))
+    return join(p, 'PalmTree')
+
+
+def wheel(name, x, y, r, w, m):
+    t = cylinder(name + 't', r, r, w, (x, y, r), (0, math.radians(90), 0), mat=m['tire'], segs=20, bevel=0.03)
+    rim = cylinder(name + 'r', r * 0.62, r * 0.62, w + 0.02, (x, y, r), (0, math.radians(90), 0), mat=m['rim'], segs=16)
+    return [t, rim]
+
+
+def car_body(m, paint, name, L=4.5, W=1.8, H=1.42, cabin=(0.42, 0.62)):
+    """Sedan: rounded lower body, tapered greenhouse with dark glass, wheels, lights, bumpers.
+    Length runs along Y (front at -Y)."""
+    p = []
+    p.append(box('lower', (W, L, 0.6), (0, 0, 0.62), mat=paint, bevel=0.14, segments=4))
+    p.append(box('sill', (W - 0.08, L - 0.3, 0.16), (0, 0, 0.34), mat=m['metalDark'], bevel=0.05))
+    # greenhouse: a box whose top is pinched toward the middle
+    gh = box('cabin', (W - 0.16, L * (cabin[1] - cabin[0]) + 0.9, 0.55), (0, L * 0.04, 1.15), mat=m['carGlass'], bevel=0.08, segments=3)
+    for v in gh.data.vertices:
+        if v.co.z > 0:
+            v.co.y *= 0.62
+            v.co.x *= 0.9
+    p.append(gh)
+    roof = box('roof', (W - 0.3, L * 0.3, 0.06), (0, L * 0.04, 1.41), mat=paint, bevel=0.03)
+    p.append(roof)
+    for sx in (-1, 1):
+        p.append(box(f'pillar{sx}', (0.04, 0.08, 0.5), (sx * (W / 2 - 0.12), L * 0.04, 1.15), mat=paint))
+        p.append(box(f'mirror{sx}', (0.18, 0.08, 0.1), (sx * (W / 2 + 0.03), -L * 0.17, 1.0), mat=paint, bevel=0.03))
+        p.append(box(f'head{sx}', (0.38, 0.05, 0.12), (sx * 0.58, -L / 2 + 0.03, 0.78), mat=m['head'], bevel=0.02))
+        p.append(box(f'tail{sx}', (0.36, 0.05, 0.12), (sx * 0.6, L / 2 - 0.03, 0.82), mat=m['tail'], bevel=0.02))
+        p.append(box(f'handle{sx}', (0.03, 0.14, 0.03), (sx * (W / 2 + 0.005), 0.1, 0.86), mat=m['chrome']))
+    p.append(box('grille', (0.8, 0.05, 0.16), (0, -L / 2 + 0.02, 0.6), mat=m['metalDark'], bevel=0.02))
+    p.append(box('bumperF', (W - 0.1, 0.16, 0.18), (0, -L / 2 + 0.05, 0.42), mat=m['metalDark'], bevel=0.06))
+    p.append(box('bumperR', (W - 0.1, 0.16, 0.18), (0, L / 2 - 0.05, 0.42), mat=m['metalDark'], bevel=0.06))
+    p.append(box('plateR', (0.5, 0.02, 0.12), (0, L / 2 + 0.035, 0.55), mat=m['plate']))
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            p += wheel(f'w{sx}{sy}', sx * (W / 2 - 0.12), sy * (L * 0.33), 0.33, 0.24, m)
+    return join(p, name)
+
+
+def sedan_red(m):
+    return car_body(m, material('CarPaintRed', 0xa8232a, rough=0.25, metal=0.5), 'SedanRed')
+
+
+def sedan_blue(m):
+    return car_body(m, material('CarPaintBlue', 0x2a4f8f, rough=0.25, metal=0.5), 'SedanBlue')
+
+
+def sedan_white(m):
+    return car_body(m, material('CarPaintWhite', 0xe4e4e2, rough=0.3, metal=0.3), 'SedanWhite')
+
+
+def taxi(m):
+    ob = car_body(m, material('CarPaintTaxi', 0xf0bc1c, rough=0.3, metal=0.3), 'Taxi')
+    sign = box('taxisign', (0.5, 0.18, 0.14), (0, 0.18, 1.5), mat=m['white'], bevel=0.03)
+    return join([ob, sign], 'Taxi')
+
+
+def van(m):
+    paint = material('VanPaint', 0xdcdcd8, rough=0.35, metal=0.3)
+    L, W = 5.0, 1.95
+    p = [box('body', (W, L - 0.9, 1.75), (0, 0.45, 1.18), mat=paint, bevel=0.12, segments=3),
+         box('nose', (W, 1.0, 0.85), (0, -L / 2 + 0.55, 0.72), mat=paint, bevel=0.16, segments=4),
+         box('wind', (W - 0.2, 0.06, 0.62), (0, -L / 2 + 0.98, 1.52), (math.radians(-22), 0, 0), mat=m['carGlass']),
+         box('sill', (W - 0.06, L - 0.3, 0.14), (0, 0, 0.33), mat=m['metalDark'], bevel=0.04),
+         box('stripe', (W + 0.01, L - 1.2, 0.12), (0, 0.5, 1.0), mat=material('VanStripe', 0x2f6fb5, rough=0.4))]
+    for sx in (-1, 1):
+        p.append(box(f'sidewin{sx}', (0.03, 0.9, 0.5), (sx * (W / 2 + 0.005), -L / 2 + 1.5, 1.55), mat=m['carGlass']))
+        p.append(box(f'head{sx}', (0.36, 0.05, 0.14), (sx * 0.6, -L / 2 + 0.06, 0.8), mat=m['head'], bevel=0.02))
+        p.append(box(f'tail{sx}', (0.14, 0.05, 0.4), (sx * (W / 2 - 0.1), L / 2 - 0.02, 1.2), mat=m['tail']))
+    p.append(box('bumperF', (W, 0.16, 0.2), (0, -L / 2 + 0.06, 0.42), mat=m['metalDark'], bevel=0.06))
+    p.append(box('bumperR', (W, 0.16, 0.2), (0, L / 2 - 0.02, 0.42), mat=m['metalDark'], bevel=0.06))
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            p += wheel(f'w{sx}{sy}', sx * (W / 2 - 0.13), -L / 2 + 0.95 if sy < 0 else L / 2 - 0.95, 0.35, 0.25, m)
+    return join(p, 'Van')
+
+
+def dumpster(m):
+    p = [box('bin', (1.9, 1.1, 1.1), (0, 0, 0.72), mat=m['dumpster'], bevel=0.04),
+         box('lid', (1.95, 1.2, 0.06), (0, 0.03, 1.31), (math.radians(-4), 0, 0), mat=m['metalDark'], bevel=0.02),
+         box('rimF', (1.95, 0.06, 0.1), (0, -0.56, 1.22), mat=m['dumpster']),
+         box('rail', (2.05, 0.06, 0.06), (0, -0.6, 0.9), mat=m['metalDark'])]
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            p.append(cylinder(f'caster{sx}{sy}', 0.08, 0.08, 0.06, (sx * 0.8, sy * 0.42, 0.08), (0, math.radians(90), 0), mat=m['rubber'], segs=12))
+    return join(p, 'Dumpster')
+
+
+def traffic_light(m):
+    p = [cylinder('base', 0.18, 0.15, 0.25, (0, 0, 0.12), mat=m['metalDark'], segs=12),
+         cylinder('pole', 0.08, 0.07, 4.6, (0, 0, 2.45), mat=m['metalDark'], segs=12),
+         limb('arm', (0, 0, 4.55), (0, -2.6, 4.75), 0.06, 0.05, m['metalDark'], segs=10)]
+    for hx, hy, hz in ((0, -2.4, 4.25), (0.0, -0.18, 3.0)):
+        p.append(box(f'housing{hy}', (0.3, 0.26, 0.86), (hx, hy, hz), mat=m['metalDark'], bevel=0.04))
+        for k, mat in enumerate((m['signalRed'], m['signalAmber'], m['signalGreen'])):
+            z = hz + 0.27 - k * 0.27
+            p.append(cylinder(f'lamp{hy}{k}', 0.09, 0.09, 0.03, (hx, hy - 0.135, z), (math.radians(90), 0, 0), mat=mat, segs=14))
+            p.append(cylinder(f'visor{hy}{k}', 0.11, 0.11, 0.12, (hx, hy - 0.2, z + 0.02), (math.radians(90), 0, 0), mat=m['metalDark'], segs=14, cap=False))
+    p.append(box('streetname', (0.9, 0.03, 0.2), (0, -1.0, 4.95), mat=material('SignGreen', 0x1f6b3a, rough=0.5)))
+    return join(p, 'TrafficLight')
+
+
+def bus_stop(m):
+    p = [box('roof', (3.2, 1.5, 0.08), (0, 0, 2.45), mat=m['metalDark'], bevel=0.02),
+         box('backglass', (3.0, 0.03, 1.8), (0, 0.65, 1.35), mat=m['glass']),
+         box('sideglassL', (0.03, 1.2, 1.8), (-1.5, 0.05, 1.35), mat=m['glass']),
+         box('ad', (0.04, 1.1, 1.6), (1.52, 0.05, 1.3), mat=material('AdPanel', 0x2d9cdb, rough=0.3, emission=0x0e3446)),
+         box('bench', (2.2, 0.38, 0.06), (0, 0.42, 0.48), mat=m['wood'], bevel=0.02),
+         box('kerb', (3.3, 1.6, 0.04), (0, 0, 0.02), mat=m['concreteDark'])]
+    for sx in (-1.55, 1.55):
+        for sy in (-0.7, 0.68):
+            p.append(cylinder(f'post{sx}{sy}', 0.04, 0.04, 2.45, (sx, sy, 1.22), mat=m['metal'], segs=10))
+    return join(p, 'BusStop')
+
+
+def forklift(m):
+    p = [box('chassis', (1.15, 2.2, 0.7), (0, 0.15, 0.62), mat=m['forklift'], bevel=0.08, segments=3),
+         box('counterweight', (1.15, 0.55, 0.75), (0, 1.15, 0.75), mat=m['metalDark'], bevel=0.1, segments=3),
+         box('seat', (0.5, 0.45, 0.12), (0, 0.45, 1.1), mat=m['rubber'], bevel=0.04),
+         box('seatback', (0.5, 0.1, 0.45), (0, 0.67, 1.35), mat=m['rubber'], bevel=0.04),
+         box('mastL', (0.09, 0.12, 2.3), (-0.4, -1.0, 1.35), mat=m['metalDark']),
+         box('mastR', (0.09, 0.12, 2.3), (0.4, -1.0, 1.35), mat=m['metalDark']),
+         box('carriage', (0.95, 0.08, 0.5), (0, -1.08, 0.55), mat=m['metalDark']),
+         box('forkL', (0.12, 1.1, 0.05), (-0.28, -1.65, 0.33), mat=m['metalDark']),
+         box('forkR', (0.12, 1.1, 0.05), (0.28, -1.65, 0.33), mat=m['metalDark']),
+         box('wheelcover', (0.4, 0.1, 0.1), (0, -0.4, 1.0), mat=m['rubber'])]
+    for sx in (-1, 1):
+        for sy, h in ((-0.25, 2.05), (0.95, 2.05)):
+            p.append(box(f'cage{sx}{sy}', (0.05, 0.05, h - 0.95), (sx * 0.5, sy, 1.5), mat=m['metalDark']))
+    p.append(box('cageTop', (1.05, 1.3, 0.05), (0, 0.35, 2.05), mat=m['metalDark']))
+    p += wheel('wf', 0, -0.55, 0.3, 1.05, m)
+    p += wheel('wr', 0, 0.95, 0.26, 1.0, m)
+    return join(p, 'Forklift')
+
+
+def power_pole(m):
+    p = [cylinder('pole', 0.16, 0.12, 8.0, (0, 0, 4.0), mat=m['pole'], segs=10),
+         box('crossarm', (2.2, 0.12, 0.14), (0, 0, 7.3), mat=m['pole']),
+         box('crossarm2', (1.6, 0.12, 0.14), (0, 0, 6.7), mat=m['pole'])]
+    for x in (-0.95, -0.35, 0.35, 0.95):
+        p.append(cylinder(f'ins{x}', 0.05, 0.04, 0.2, (x, 0, 7.47), mat=m['ceramic'], segs=10))
+    for x in (-0.65, 0.65):
+        p.append(cylinder(f'ins2{x}', 0.05, 0.04, 0.2, (x, 0, 6.87), mat=m['ceramic'], segs=10))
+    p.append(cylinder('transformer', 0.28, 0.28, 0.75, (0, 0.3, 5.6), mat=m['metal'], segs=14, bevel=0.03))
+    return join(p, 'PowerPole')
+
+
+def boulder(m):
+    rnd = random.Random(4)
+    p = [leaf_cluster('rockA', 0.9, (0, 0, 0.55), m['rock'], seed=31, squash=0.65, detail=3),
+         leaf_cluster('rockB', 0.6, (0.6, 0.35, 0.35), m['rock2'], seed=32, squash=0.7, detail=2),
+         leaf_cluster('rockC', 0.45, (-0.55, -0.4, 0.28), m['rock2'], seed=33, squash=0.75, detail=2)]
+    return join(p, 'Boulder')
+
+
 BUILDERS = [street_lamp, bench, trash_bin, cone, barrier, hydrant, planter, ac_unit, water_tank, sat_dish, oil_drum,
-            sandbags, pallet, crate, cafe_set, bollard, road_sign, antenna, vent, mooring, news_box, tire_stack]
+            sandbags, pallet, crate, cafe_set, bollard, road_sign, antenna, vent, mooring, news_box, tire_stack,
+            oak_tree, pine_tree, palm_tree, sedan_red, sedan_blue, sedan_white, taxi, van, dumpster, traffic_light,
+            bus_stop, forklift, power_pole, boulder]
 
 
 def build_all():

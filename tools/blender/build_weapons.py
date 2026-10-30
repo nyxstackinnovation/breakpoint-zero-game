@@ -5,9 +5,27 @@ The rifle's handguard support point sits at (0, -0.24, 0.085); the launcher's fo
 is placed at the same point, so the same hand poses fit both weapons.
 """
 import math
+import bmesh
+import bpy
 from mathutils import Vector
-from bpz_common import (material, box, cylinder, sphere, join, smooth, export_glb, log, clear_scene,
-                        OUT_MODELS, save_blend)
+from bpz_common import (material, box as _box, cylinder as _cyl, sphere, join, smooth, export_glb, log, clear_scene,
+                        OUT_MODELS, save_blend, bm_to_object)
+
+# Smoother first-person weapons: every bevelled edge gets 3 segments (rounded instead of chamfered) and
+# round parts get more sides. LOD 1 (the guns other players carry) keeps the cheap version.
+_SMOOTH = {'on': False}
+
+
+def box(name, size, loc=(0, 0, 0), rot=(0, 0, 0), mat=None, bevel=0.0, segments=None):
+    if _SMOOTH['on'] and bevel > 0:
+        return _box(name, size, loc, rot, mat, bevel * 1.35, segments or 3)
+    return _box(name, size, loc, rot, mat, bevel, segments or 2)
+
+
+def cylinder(name, r1, r2, depth, loc=(0, 0, 0), rot=(0, 0, 0), mat=None, segs=16, bevel=0.0, cap=True):
+    if _SMOOTH['on']:
+        segs = max(segs, 8 if segs <= 8 else 28)
+    return _cyl(name, r1, r2, depth, loc, rot, mat, segs, bevel, cap)
 import os
 
 SUPPORT_POINT = (0.0, -0.24, 0.085)
@@ -37,11 +55,12 @@ def X(a):
 def build_rifle(lod=0, with_mag=True, name='Rifle'):
     M = mats()
     hi = lod == 0
+    _SMOOTH['on'] = hi
     bv = 0.004 if hi else 0.0
     parts = []
-    parts.append(box('lower', (0.044, 0.20, 0.055), (0, -0.02, 0.045), mat=M['metal'], bevel=bv))
+    parts.append(box('lower', (0.044, 0.20, 0.055), (0, -0.02, 0.045), mat=M['metal'], bevel=0.006 if hi else 0))
     parts.append(box('magwell', (0.047, 0.075, 0.05), (0, -0.078, 0.008), mat=M['metal'], bevel=bv))
-    parts.append(box('upper', (0.049, 0.25, 0.05), (0, -0.03, 0.098), mat=M['metal'], bevel=bv))
+    parts.append(box('upper', (0.049, 0.25, 0.05), (0, -0.03, 0.098), mat=M['metal'], bevel=0.006 if hi else 0))
     parts.append(box('rail', (0.027, 0.27, 0.012), (0, -0.04, 0.129), mat=M['dark']))
     if hi:
         for i in range(20):
@@ -52,7 +71,7 @@ def build_rifle(lod=0, with_mag=True, name='Rifle'):
         parts.append(box('magrelease', (0.004, 0.01, 0.01), (-0.0235, -0.045, 0.04), mat=M['dark']))
     parts.append(box('charging', (0.054, 0.022, 0.012), (0, 0.098, 0.116), mat=M['dark'], bevel=0.002 if hi else 0))
     # handguard (octagonal, tan) with dark M-LOK slot inserts
-    hg = cylinder('handguard', 0.033, 0.033, 0.33, (0, -0.315, 0.09), X(90), mat=M['tan'], segs=8, bevel=0.003 if hi else 0)
+    hg = cylinder('handguard', 0.033, 0.033, 0.33, (0, -0.315, 0.09), X(90), mat=M['tan'], segs=8, bevel=0.006 if hi else 0)
     hg.rotation_euler = (math.radians(90), math.radians(22.5), 0)
     parts.append(hg)
     if hi:
@@ -70,7 +89,7 @@ def build_rifle(lod=0, with_mag=True, name='Rifle'):
         for i in range(3):
             parts.append(box(f'brakeslot{i}', (0.031, 0.007, 0.008), (0, -0.682 - i * 0.014, 0.097), mat=M['rubber']))
     # grip and trigger group
-    parts.append(box('grip', (0.032, 0.046, 0.11), (0, 0.012, -0.006), X(-19), mat=M['polymer'], bevel=0.008 if hi else 0))
+    parts.append(box('grip', (0.032, 0.046, 0.11), (0, 0.012, -0.006), X(-19), mat=M['polymer'], bevel=0.012 if hi else 0, segments=4 if hi else None))
     if hi:
         for i in range(3):
             parts.append(box(f'groove{i}', (0.034, 0.006, 0.008), (0, -0.01 + i * 0.004, 0.02 - i * 0.03), X(-19), mat=M['rubber']))
@@ -79,7 +98,7 @@ def build_rifle(lod=0, with_mag=True, name='Rifle'):
     parts.append(box('trigger', (0.005, 0.007, 0.024), (0, -0.04, 0.014), X(12), mat=M['metal']))
     # stock
     parts.append(cylinder('buffer', 0.0165, 0.0165, 0.18, (0, 0.165, 0.085), X(90), mat=M['dark'], segs=14 if hi else 8))
-    parts.append(box('stock', (0.044, 0.15, 0.072), (0, 0.235, 0.072), mat=M['tan'], bevel=0.012 if hi else 0))
+    parts.append(box('stock', (0.044, 0.15, 0.072), (0, 0.235, 0.072), mat=M['tan'], bevel=0.016 if hi else 0, segments=4 if hi else None))
     parts.append(box('cheek', (0.04, 0.1, 0.022), (0, 0.225, 0.112), mat=M['tan'], bevel=0.008 if hi else 0))
     parts.append(box('buttpad', (0.047, 0.022, 0.108), (0, 0.31, 0.07), mat=M['rubber'], bevel=0.006 if hi else 0))
     # optic: holographic sight
@@ -99,27 +118,73 @@ def build_rifle(lod=0, with_mag=True, name='Rifle'):
         parts.append(mag)
     ob = join(parts, name)
     smooth(ob, 40)
+    _SMOOTH['on'] = False
     return ob
 
 
+def swept(name, path, half_w, half_d, mat, corner=0.006, ring_segs=3, ribs=None):
+    """A rounded-rectangle section (half width x half depth, rounded corners) swept along a list of
+    (y, z, angle) stations in the YZ plane; capped at both ends. ribs(t) -> extra outward offset."""
+    sec = []
+    for cx, cy, a0 in ((1, 1, 0), (-1, 1, 90), (-1, -1, 180), (1, -1, 270)):
+        for k in range(ring_segs + 1):
+            a = math.radians(a0 + 90 * k / ring_segs)
+            sec.append((cx * (half_w - corner) + math.cos(a) * corner, cy * (half_d - corner) + math.sin(a) * corner))
+    bm = bmesh.new()
+    rings = []
+    n = len(path)
+    for si, (y, z, ang) in enumerate(path):
+        t = si / (n - 1)
+        bulge = ribs(t) if ribs else 0.0
+        ca, sa = math.cos(ang), math.sin(ang)
+        ring = []
+        for (sx, sd) in sec:
+            # section x -> world X; section d -> along the station's local 'forward' (Y rotated by ang)
+            d = sd * (1 + bulge / max(half_d, 1e-4))
+            ring.append(bm.verts.new((sx * (1 + bulge / max(half_w, 1e-4)), y + d * ca, z - d * sa)))
+        rings.append(ring)
+    m = len(sec)
+    for a, b in zip(rings, rings[1:]):
+        for k in range(m):
+            bm.faces.new((a[k], a[(k + 1) % m], b[(k + 1) % m], b[k]))
+    bm.faces.new(list(reversed(rings[0])))
+    bm.faces.new(rings[-1])
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    return bm_to_object(bm, name, mat)
+
+
 def build_magazine(lod=0, name='Magazine'):
+    """Curved 30-round magazine: one smooth swept body with reinforcing ribs, instead of stacked blocks."""
     M = mats()
-    parts = []
     hi = lod == 0
-    for i in range(6):
-        a = math.radians(4 + i * 4.2)
-        parts.append(box(f'mag{i}', (0.026, 0.068, 0.036), (0, -0.003 - i * 0.0052, -0.016 - i * 0.034), (a, 0, 0), mat=M['polymer'], bevel=0.003 if hi else 0))
-    parts.append(box('magbase', (0.03, 0.078, 0.012), (0, -0.036, -0.215), X(25), mat=M['dark'], bevel=0.003 if hi else 0))
+    parts = []
+    # arc: starts at the magwell, curves forward as it goes down
+    stations = []
+    steps = 22 if hi else 8
+    r = 0.62
+    for i in range(steps + 1):
+        t = i / steps
+        a = t * 0.36                    # radians of curve over the length
+        y = -0.003 - (r - r * math.cos(a)) - 0.012 * t
+        z = 0.002 - r * math.sin(a)
+        stations.append((y, z, a))
+    ribs = (lambda t: 0.0016 * max(0.0, math.cos(t * math.pi * 7)) ** 8) if hi else None
+    body = swept('magbody', stations, 0.0135, 0.034, M['polymer'], corner=0.007 if hi else 0.004, ring_segs=3 if hi else 1, ribs=ribs)
+    parts.append(body)
+    y, z, a = stations[-1]
+    plate = box('magbase', (0.032, 0.078, 0.012), (0, y - 0.006 * math.sin(a), z - 0.006 * math.cos(a)), (-a, 0, 0), mat=M['dark'], bevel=0.003 if hi else 0)
+    parts.append(plate)
     if hi:
-        parts.append(box('round', (0.012, 0.05, 0.008), (0, -0.002, 0.004), mat=M['brass']))
+        parts.append(box('round', (0.012, 0.05, 0.008), (0, -0.002, 0.006), mat=M['brass'], bevel=0.003))
     ob = join(parts, name)
-    smooth(ob, 40)
+    smooth(ob, 50)
     return ob
 
 
 def build_launcher(lod=0, with_warhead=False, name='Launcher'):
     M = mats()
     hi = lod == 0
+    _SMOOTH['on'] = hi
     seg = 20 if hi else 10
     tz = 0.2
     parts = []
@@ -150,6 +215,7 @@ def build_launcher(lod=0, with_warhead=False, name='Launcher'):
         parts.append(build_warhead(lod, 'whtmp'))
     ob = join(parts, name)
     smooth(ob, 40)
+    _SMOOTH['on'] = False
     return ob
 
 

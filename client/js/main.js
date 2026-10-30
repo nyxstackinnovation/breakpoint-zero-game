@@ -94,7 +94,17 @@ class App {
     const name = () => { const n = nameInput.value.trim().slice(0, 16) || 'Player'; settings.set('name', n); return n; };
     const click = (id, fn) => $(id).addEventListener('click', (e) => { this.audio.unlock(); this.audio.ui(); fn(e); });
 
-    click('btn-quick', () => { if (!this.requireConn()) return; this.net.send({ t: 'quick', name: name() }); this.showLoading('FINDING MATCH'); });
+    // bot skill for Quick Match, remembered between visits
+    const skillBtns = [...document.querySelectorAll('#quick-skill button')];
+    const showSkill = () => { for (const b of skillBtns) b.classList.toggle('on', b.dataset.v === settings.get('botSkill')); };
+    for (const b of skillBtns) b.addEventListener('click', () => { settings.set('botSkill', b.dataset.v); showSkill(); this.audio.ui?.(); });
+    showSkill();
+    const mapBtns = [...document.querySelectorAll('#quick-map button')];
+    if (!mapBtns.some((b) => b.dataset.v === settings.get('quickMap'))) settings.set('quickMap', 'any'); // a removed map was saved
+    const showMap = () => { for (const b of mapBtns) b.classList.toggle('on', b.dataset.v === settings.get('quickMap')); };
+    for (const b of mapBtns) b.addEventListener('click', () => { settings.set('quickMap', b.dataset.v); showMap(); this.audio.ui?.(); });
+    showMap();
+    click('btn-quick', () => { if (!this.requireConn()) return; this.net.send({ t: 'quick', name: name(), difficulty: settings.get('botSkill'), map: settings.get('quickMap') }); this.showLoading('FINDING MATCH'); });
     click('btn-create', () => { if (!this.requireConn()) return; this.net.send({ t: 'create', name: name() }); });
     click('btn-join', () => {
       if (!this.requireConn()) return;
@@ -104,6 +114,19 @@ class App {
     });
     $('code-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btn-join').click(); });
     click('btn-settings', () => this.openSettings());
+    // full screen from the main menu (the browser only allows it from a click)
+    const fsBtn = $('btn-fullscreen');
+    const fsLabel = () => { fsBtn.firstElementChild.textContent = document.fullscreenElement ? 'EXIT FULL SCREEN' : 'FULL SCREEN'; };
+    fsBtn.addEventListener('click', () => {
+      if (document.fullscreenElement) document.exitFullscreen?.();
+      else (document.documentElement.requestFullscreen?.({ navigationUI: 'hide' }) || Promise.resolve()).catch(() => this.toast('Full screen is not allowed here'));
+    });
+    document.addEventListener('fullscreenchange', () => {
+      fsLabel();
+      // keep Esc for the pause menu while in full screen (hold Esc to leave full screen; Chrome / Edge)
+      if (document.fullscreenElement) navigator.keyboard?.lock?.(['Escape']).catch(() => {});
+      else navigator.keyboard?.unlock?.();
+    });
     click('btn-pause-settings', () => this.openSettings());
     click('btn-settings-close', () => this.closeSettings());
     click('btn-copy', () => {
@@ -125,12 +148,15 @@ class App {
     $('set-diff').addEventListener('click', (e) => { const v = e.target.dataset.v; if (v) this.hostSettings({ difficulty: v }); });
     $('set-rotation').addEventListener('change', (e) => this.hostSettings({ rotation: e.target.checked }));
 
-    this.input.onLockChange = (locked) => {
+    this.input.onLockChange = (locked, reason) => {
       if (this.screen !== 'hud') return;
       if (locked) {
         this.paused = false;
         $('pause-menu').classList.add('hidden');
         $('click-to-play').classList.add('hidden');
+      } else if (reason === 'focus') {
+        // switched to another window: no pause menu, just a prompt to click back in
+        if (!this.paused) $('click-to-play').classList.remove('hidden');
       } else if ($('settings-modal').classList.contains('hidden')) {
         this.paused = true;
         $('pause-menu').classList.remove('hidden');
@@ -143,7 +169,10 @@ class App {
         this.scoreboardOpen = down;
         this.hud.showScoreboard(down || this.game.serverState === 'intermission');
       }
-      if (code === 'Escape' && down && this.screen === 'hud' && !this.input.locked) {
+      if (code === 'Escape' && down && this.screen === 'hud' && this.input.locked) {
+        // full screen holds Esc for the game (keyboard lock), so it opens the menu instead of leaving full screen
+        this.input.unlock();
+      } else if (code === 'Escape' && down && this.screen === 'hud' && !this.input.locked) {
         if (!$('settings-modal').classList.contains('hidden')) this.closeSettings();
         else if (this.paused) this.resume();
       }
@@ -207,7 +236,7 @@ class App {
   updatePauseMenu() {
     const isHost = this.room && !this.room.public && this.room.host === this.myId;
     for (const el of document.querySelectorAll('.host-only')) el.classList.toggle('hidden', !isHost);
-    $('pause-code').innerHTML = this.room && !this.room.public ? `ROOM CODE <b>${esc(this.room.code)}</b>` : 'QUICK MATCH';
+    $('pause-code').innerHTML = this.room && !this.room.public ? `ROOM CODE <b>${esc(this.room.code)}</b>` : `QUICK MATCH · ${esc(String(this.room?.settings?.difficulty || 'easy').toUpperCase())} BOTS${this.room?.settings?.quickMap && this.room.settings.quickMap !== 'any' ? ' · ' + esc(this.room.settings.quickMap.toUpperCase()) : ''}`;
   }
 
   renderLobby() {
@@ -288,7 +317,7 @@ class App {
     const dt = Math.min(0.25, (t - this.last) / 1000);
     this.last = t;
     if (dt > 0) this.fps += (1 / dt - this.fps) * 0.05;
-    if (this.game.frame(dt)) this.game.render();
+    if (this.game.frame(dt)) { this.sceneManager.adapt(dt); this.game.render(); }
     else this.renderIdle(dt);
     requestAnimationFrame((tt) => this.loop(tt));
   }

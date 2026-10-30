@@ -31,13 +31,24 @@
             <span>CALLSIGN</span>
             <input id="name-input" maxlength="16" autocomplete="off" spellcheck="false">
           </label>
+          <div class="skill-row" id="quick-skill">
+            <span class="skill-label">BOT SKILL</span>
+            <button data-v="easy">EASY</button><button data-v="medium">MEDIUM</button><button data-v="hard">HARD</button>
+          </div>
+          <div class="skill-row map-row" id="quick-map">
+            <span class="skill-label">MAP</span>
+            <button data-v="any">ANY</button><button data-v="skyline">SKYLINE</button><button data-v="harbor">HARBOR</button><button data-v="downtown">DOWNTOWN</button>
+          </div>
           <button id="btn-quick" class="btn big primary"><span>QUICK MATCH</span></button>
           <button id="btn-create" class="btn big"><span>CREATE PRIVATE ROOM</span></button>
           <div class="join-row">
             <input id="code-input" placeholder="ROOM CODE" maxlength="5" autocomplete="off" spellcheck="false">
             <button id="btn-join" class="btn"><span>JOIN</span></button>
           </div>
-          <button id="btn-settings" class="btn"><span>SETTINGS</span></button>
+          <div class="menu-row">
+            <button id="btn-settings" class="btn"><span>SETTINGS</span></button>
+            <button id="btn-fullscreen" class="btn"><span>FULL SCREEN</span></button>
+          </div>
         </div>
         <div class="controls-card">
           <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> MOVE</div>
@@ -110,9 +121,12 @@
     <section id="hud" class="screen">
       <div id="nameplates"></div>
       <div id="vignette"></div>
+      <div id="blast-flash"></div>
       <div id="damage-flash"></div>
       <div id="crosshair"><i class="ch-t"></i><i class="ch-b"></i><i class="ch-l"></i><i class="ch-r"></i><i class="ch-dot"></i></div>
       <div id="hitmarker"><i></i><i></i><i></i><i></i></div>
+      <div id="dmg-numbers"></div>
+      <div id="weapon-hint"></div>
       <div id="dmg-indicators"></div>
       <div id="top-bar">
         <div class="tb-map" id="hud-map">SKYLINE</div>
@@ -121,11 +135,30 @@
       </div>
       <div id="killfeed"></div>
       <div id="center-msg"></div>
+      <div id="kill-pulse"></div>
+      <div id="kill-banner">
+        <div class="kb-medal">
+          <svg viewBox="0 0 100 100" aria-hidden="true">
+            <polygon class="kb-burst" points="50,2 60,30 90,18 72,44 98,56 68,62 78,92 50,74 22,92 32,62 2,56 28,44 10,18 40,30"/>
+            <circle cx="50" cy="50" r="27" class="kb-ring"/>
+            <path class="kb-skull" d="M50 30c-11 0-19 8-19 18 0 6 3 10 7 13v6h24v-6c4-3 7-7 7-13 0-10-8-18-19-18zm-8 24a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm16 0a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm-8 3l-3 5h6z"/>
+            <rect class="kb-skull" x="42" y="69" width="4" height="5"/><rect class="kb-skull" x="48" y="69" width="4" height="5"/><rect class="kb-skull" x="54" y="69" width="4" height="5"/>
+          </svg>
+        </div>
+        <div class="kb-ribbon"><span class="kb-title">ELIMINATED</span><b class="kb-name"></b></div>
+        <div class="kb-sub"></div>
+      </div>
       <div id="heal-pop"></div>
+      <div id="kills-box">
+        <svg class="kc-skull" viewBox="0 0 100 100" aria-hidden="true"><path d="M50 14c-19 0-33 14-33 31 0 10 5 18 12 23v11h42V68c7-5 12-13 12-23 0-17-14-31-33-31zM36 58a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm28 0a8 8 0 1 1 0-16 8 8 0 0 1 0 16zM50 62l-5 8h10z"/><rect x="38" y="80" width="6" height="8"/><rect x="47" y="80" width="6" height="8"/><rect x="56" y="80" width="6" height="8"/></svg>
+        <div class="kc-text"><div class="kc-label">KILLS</div><div class="kc-num" id="hud-kills">0</div></div>
+        <div class="kc-sub" id="hud-kd">0 deaths</div>
+        <span class="kc-plus">+1</span>
+      </div>
       <div id="health-box">
         <div class="hb-label">HEALTH</div>
         <div class="hb-num" id="hud-health">100</div>
-        <div class="hb-bar"><i id="hud-health-bar"></i></div>
+        <div class="hb-bar"><b id="hud-health-trail"></b><i id="hud-health-bar"></i></div>
       </div>
       <div id="ammo-box">
         <div class="ab-rifle"><span class="ab-label">RIFLE</span><b id="hud-ammo">30</b><em>/ 30</em></div>
@@ -146,12 +179,14 @@
       <div class="death-box">
         <div class="death-title">ELIMINATED</div>
         <div class="death-by" id="death-by"></div>
+        <div class="death-killer" id="death-killer"></div>
         <div class="death-timer" id="death-timer">RESPAWN IN 3</div>
       </div>
     </div>
 
     <div id="round-end" class="overlay hidden">
-      <div class="re-panel">
+      <div class="re-victory hidden" id="re-victory"><span class="rv-main">HONORABLE</span></div>
+      <div class="re-panel" id="re-panel">
         <div class="re-kicker">ROUND OVER</div>
         <div class="re-winner" id="re-winner">—</div>
         <ol id="re-standings"></ol>

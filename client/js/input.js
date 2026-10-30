@@ -49,10 +49,22 @@ export class Input {
       this.dx += e.movementX;
       this.dy += e.movementY;
     });
+    // Remember when the window loses focus: the browser also drops the mouse lock then (alt-tab,
+    // Windows key, a notification), and that should not open the pause menu like Esc does.
+    this.lastBlur = -1e9;
+    const blurred = () => { this.lastBlur = performance.now(); this.keys.clear(); };
+    window.addEventListener('blur', blurred);
+    document.addEventListener('visibilitychange', () => { if (document.hidden) blurred(); });
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === this.canvas;
-      if (!this.locked) { this.mouse.left = this.mouse.right = false; }
-      if (this.onLockChange) this.onLockChange(this.locked);
+      if (this.locked) { if (this.onLockChange) this.onLockChange(true, 'lock'); return; }
+      this.mouse.left = this.mouse.right = false;
+      // the blur event can arrive just after the unlock, so decide a moment later
+      setTimeout(() => {
+        if (this.locked) return;
+        const focusLost = document.hidden || !document.hasFocus() || performance.now() - this.lastBlur < 500;
+        if (this.onLockChange) this.onLockChange(false, focusLost ? 'focus' : 'esc');
+      }, 150);
     });
   }
 

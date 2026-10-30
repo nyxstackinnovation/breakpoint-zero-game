@@ -34,6 +34,7 @@ export class BotBrain {
     this.perceiveOffset = player.id * 3;
     this.noisePhase = Math.random() * 100;
     this.trackTicks = 0;
+    this.missOffset = 0;
   }
 
   setDifficulty(d) {
@@ -145,9 +146,13 @@ export class BotBrain {
       desiredPitch = Math.atan2(ay - ey, Math.hypot(ax, az));
       // aim wobble that decays while tracking
       this.noisePhase += 0.05;
-      const settle = Math.max(0.35, 1 - this.trackTicks / (TICK_RATE * 2.5));
-      desiredYaw += Math.sin(this.noisePhase * 1.7) * d.aimError * settle;
-      desiredPitch += Math.cos(this.noisePhase * 1.3) * d.aimError * 0.6 * settle;
+      // aim wobble decays while tracking, grows with range and with how fast the target moves
+      const settle = Math.max(0.45, 1 - this.trackTicks / (TICK_RATE * d.settleTime));
+      const tSpeed = Math.hypot(t.move.vx, t.move.vz);
+      const wobble = d.aimError * settle * (1 + Math.min(1.5, dist / 30)) * (1 + Math.min(1, tSpeed / 7) * 0.8);
+      desiredYaw += Math.sin(this.noisePhase * 1.7) * wobble + this.missOffset;
+      desiredPitch += Math.cos(this.noisePhase * 1.3) * wobble * 0.6;
+      if (tick % 30 === 0) this.missOffset = Math.random() < d.missChance ? (Math.random() < 0.5 ? -1 : 1) * (0.04 + Math.random() * 0.06) : 0;
       lookAtMove = false;
 
       // movement: hold preferred distance and strafe

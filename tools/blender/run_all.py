@@ -20,7 +20,10 @@ import bpz_common
 importlib.reload(bpz_common)
 bpz_common.reset_log()
 
-STEPS = [('build_weapons', 'weapons'), ('build_props', 'props'), ('build_characters', 'characters')]
+STEPS = [('build_weapons', 'weapons'), ('build_props', 'props'), ('build_operators', 'operators')]
+# the older generic soldier builder is kept for reference: BPZ_ONLY=characters
+if os.environ.get('BPZ_ONLY', '') == 'characters':
+    STEPS.append(('build_characters', 'characters'))
 only = os.environ.get('BPZ_ONLY', '')
 
 for mod_name, label in STEPS:

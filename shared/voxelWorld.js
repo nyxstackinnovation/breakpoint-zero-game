@@ -14,6 +14,8 @@ export class VoxelWorld {
     this.data = new Uint8Array(this.size);
     this.palette = new Uint32Array(256);   // 0xRRGGBB per material index
     this.hard = new Uint8Array(256);        // 1 = indestructible material
+    this.material = new Uint8Array(256);    // surface material (shared/materials.js)
+    this.ghost = new Uint8Array(256);       // 1 = invisible collision voxel (used under props)
     this.mark = null;                       // lazily allocated search buffer
     this.searchId = 0;
     this.onChange = null;                   // (x, y, z) => void, used by client mesher
@@ -169,7 +171,7 @@ export class VoxelWorld {
   // that are no longer connected to an anchor (bedrock layer or indestructible material).
   findFloatingClusters(removed, maxSearch = CRUSH.maxClusterSearch) {
     if (!this.mark) this.mark = new Uint32Array(this.size);
-    const mark = this.mark, data = this.data, hard = this.hard;
+    const mark = this.mark, data = this.data, hard = this.hard, ghost = this.ghost;
     const sx = this.sx, sz = this.sz, layer = this.layer;
     const callBase = this.searchId + 1;
     const clusters = [];
@@ -187,7 +189,7 @@ export class VoxelWorld {
       if (y < this.sy - 1) candidates.push(i + layer);
     }
     for (const cand of candidates) {
-      if (data[cand] === AIR) continue;
+      if (data[cand] === AIR || ghost[data[cand]]) continue;
       if (mark[cand] >= callBase) continue;
       const sid = ++this.searchId;
       mark[cand] = sid;
@@ -203,12 +205,12 @@ export class VoxelWorld {
         if (list.length > maxSearch) { anchored = true; break; }
         // push order: up first, down last (popped first) to reach the ground quickly
         let n;
-        if (y < this.sy - 1) { n = i + layer; if (data[n] !== AIR) { const m = mark[n]; if (m >= callBase && m !== sid) { anchored = true; break; } if (m !== sid) { mark[n] = sid; stack.push(n); } } }
-        if (x > 0) { n = i - 1; if (data[n] !== AIR) { const m = mark[n]; if (m >= callBase && m !== sid) { anchored = true; break; } if (m !== sid) { mark[n] = sid; stack.push(n); } } }
-        if (x < sx - 1) { n = i + 1; if (data[n] !== AIR) { const m = mark[n]; if (m >= callBase && m !== sid) { anchored = true; break; } if (m !== sid) { mark[n] = sid; stack.push(n); } } }
-        if (z > 0) { n = i - sx; if (data[n] !== AIR) { const m = mark[n]; if (m >= callBase && m !== sid) { anchored = true; break; } if (m !== sid) { mark[n] = sid; stack.push(n); } } }
-        if (z < sz - 1) { n = i + sx; if (data[n] !== AIR) { const m = mark[n]; if (m >= callBase && m !== sid) { anchored = true; break; } if (m !== sid) { mark[n] = sid; stack.push(n); } } }
-        n = i - layer; if (data[n] !== AIR) { const m = mark[n]; if (m >= callBase && m !== sid) { anchored = true; break; } if (m !== sid) { mark[n] = sid; stack.push(n); } }
+        if (y < this.sy - 1) { n = i + layer; if (data[n] !== AIR && !ghost[data[n]]) { const m = mark[n]; if (m >= callBase && m !== sid) { anchored = true; break; } if (m !== sid) { mark[n] = sid; stack.push(n); } } }
+        if (x > 0) { n = i - 1; if (data[n] !== AIR && !ghost[data[n]]) { const m = mark[n]; if (m >= callBase && m !== sid) { anchored = true; break; } if (m !== sid) { mark[n] = sid; stack.push(n); } } }
+        if (x < sx - 1) { n = i + 1; if (data[n] !== AIR && !ghost[data[n]]) { const m = mark[n]; if (m >= callBase && m !== sid) { anchored = true; break; } if (m !== sid) { mark[n] = sid; stack.push(n); } } }
+        if (z > 0) { n = i - sx; if (data[n] !== AIR && !ghost[data[n]]) { const m = mark[n]; if (m >= callBase && m !== sid) { anchored = true; break; } if (m !== sid) { mark[n] = sid; stack.push(n); } } }
+        if (z < sz - 1) { n = i + sx; if (data[n] !== AIR && !ghost[data[n]]) { const m = mark[n]; if (m >= callBase && m !== sid) { anchored = true; break; } if (m !== sid) { mark[n] = sid; stack.push(n); } } }
+        n = i - layer; if (data[n] !== AIR && !ghost[data[n]]) { const m = mark[n]; if (m >= callBase && m !== sid) { anchored = true; break; } if (m !== sid) { mark[n] = sid; stack.push(n); } }
       }
       if (!anchored) {
         // drain anything still on the stack (already marked, belongs to the component)
@@ -217,6 +219,120 @@ export class VoxelWorld {
     }
     return clusters;
   }
+  // Loose bits left hanging after a blast: a block (or a short strand) with nothing underneath that holds
+  // on by a single face, like a brick stuck to the side of a wall. They are attached, so the floating
+  // check keeps them, but they look like they hover. Returns them so the caller can crumble them.
+  findDangling(x0, y0, z0, x1, y1, z1, passes = 3) {
+    const { sx, sy, sz, layer, data, ghost, hard } = this;
+    x0 = Math.max(1, x0); y0 = Math.max(1, y0); z0 = Math.max(1, z0);
+    x1 = Math.min(sx - 2, x1); y1 = Math.min(sy - 2, y1); z1 = Math.min(sz - 2, z1);
+    const solid = (i) => { const v = data[i]; return v !== AIR && !ghost[v]; };
+    const out = [];
+    const gone = new Set();
+    const isSolid = (i) => solid(i) && !gone.has(i);
+    for (let pass = 0; pass < passes; pass++) {
+      let found = 0;
+      for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) {
+        const i = x + z * sx + y * layer;
+        if (!isSolid(i) || hard[data[i]]) continue;
+        if (isSolid(i - layer)) continue;                       // resting on something
+        let n = 0;
+        if (isSolid(i + layer)) n++;
+        if (isSolid(i - 1)) n++;
+        if (isSolid(i + 1)) n++;
+        if (isSolid(i - sx)) n++;
+        if (isSolid(i + sx)) n++;
+        if (n <= 1) { gone.add(i); out.push(i); found++; }
+      }
+      if (!found) break;
+    }
+    return out;
+  }
+
+  // Buildings that still touch the ground, but too little of it to carry their weight: shoot away the
+  // ground-floor walls and a building is left standing on its stairs and one thin column, or hanging off
+  // a sky bridge. Each building registered by the map generator (this.structures: its box) is judged on
+  // its own: every voxel inside the box resting on or against terrain is a support contact, every link
+  // leaving the box (bridge, neighbour) counts as one contact. A piece falls when its weight per contact
+  // gets well above what the intact building had (baseline ratio from measureStructures()).
+  measureStructures() {
+    for (const st of this.structures || []) {
+      const r = this.structurePieces(st);
+      let mass = 0, contacts = 0;
+      for (const p of r) { mass += p.list.length; contacts += p.contacts; }
+      st.ratio0 = contacts > 0 ? mass / contacts : 0;
+    }
+  }
+
+  structurePieces(st) {
+    const top = this.terrainTop;
+    const { sx, sy, sz, layer, data, ghost } = this;
+    if (!this.mark) this.mark = new Uint32Array(this.size);
+    const mark = this.mark;
+    const x0 = Math.max(0, st.x0 - 1), x1 = Math.min(sx - 1, st.x1 + 1);
+    const z0 = Math.max(0, st.z0 - 1), z1 = Math.min(sz - 1, st.z1 + 1);
+    const y0 = Math.max(1, st.y0), y1 = Math.min(sy - 1, st.y1);
+    const sid = ++this.searchId;
+    const pieces = [];
+    const stack = [];
+    const solid = (v) => v !== AIR && !ghost[v];
+    for (let y = y0; y <= y1; y++) for (let z = z0; z <= z1; z++) for (let x = x0; x <= x1; x++) {
+      const i0 = x + z * sx + y * layer;
+      if (!solid(data[i0]) || mark[i0] === sid || y < top[z * sx + x]) continue;
+      mark[i0] = sid;
+      stack.length = 0;
+      stack.push(i0);
+      const list = [];
+      let contacts = 0, strong = false;
+      while (stack.length) {
+        const i = stack.pop();
+        list.push(i);
+        if (this.hard[data[i]]) strong = true;
+        const x = i % sx, t = (i / sx) | 0, z = t % sz, y = (t / sz) | 0;
+        let touch = 0;
+        const nb = [[i - layer, x, y - 1, z, y > 0], [i + layer, x, y + 1, z, y < sy - 1], [i - 1, x - 1, y, z, x > 0], [i + 1, x + 1, y, z, x < sx - 1], [i - sx, x, y, z - 1, z > 0], [i + sx, x, y, z + 1, z < sz - 1]];
+        for (const [n, nx, ny, nz, ok] of nb) {
+          if (!ok || !solid(data[n])) continue;
+          if (ny < top[nz * sx + nx]) { touch = 1; continue; }
+          if (nx < x0 || nx > x1 || nz < z0 || nz > z1 || ny < y0 || ny > y1) { touch = 1; continue; } // link out of the box
+          if (mark[n] !== sid) { mark[n] = sid; stack.push(n); }
+        }
+        contacts += touch;
+      }
+      pieces.push({ list, contacts, strong });
+    }
+    return pieces;
+  }
+
+  findWeakStructures(removed) {
+    const out = [];
+    if (!this.terrainTop || !this.structures || !removed.length) return out;
+    const tmp = [0, 0, 0];
+    let bx0 = Infinity, bx1 = -Infinity, by0 = Infinity, by1 = -Infinity, bz0 = Infinity, bz1 = -Infinity;
+    for (const i of removed) {
+      this.coords(i, tmp);
+      bx0 = Math.min(bx0, tmp[0]); bx1 = Math.max(bx1, tmp[0]);
+      by0 = Math.min(by0, tmp[1]); by1 = Math.max(by1, tmp[1]);
+      bz0 = Math.min(bz0, tmp[2]); bz1 = Math.max(bz1, tmp[2]);
+    }
+    for (const st of this.structures) {
+      if (!st.ratio0) continue;
+      if (bx1 < st.x0 - 2 || bx0 > st.x1 + 2 || bz1 < st.z0 - 2 || bz0 > st.z1 + 2 || by1 < st.y0 - 2 || by0 > st.y1 + 2) continue;
+      const limit = Math.max(CRUSH.supportRatio, st.ratio0 * CRUSH.supportLoss);
+      for (const p of this.structurePieces(st)) {
+        if (p.strong || p.list.length < CRUSH.supportMinMass) continue;
+        if (p.list.length / Math.max(0.5, p.contacts) <= limit) continue;
+        // what is left of the ground floor (stairs, columns, wall stubs) gives way; everything from the
+        // first floor up drops onto the rubble
+        const cut = st.y0 + (st.fh || 8) - 1;
+        const fall = [], crush = [];
+        for (const i of p.list) (Math.floor(i / this.layer) < cut ? crush : fall).push(i);
+        out.push({ fall: Int32Array.from(fall), crush: Int32Array.from(crush) });
+      }
+    }
+    return out;
+  }
+
 
   // Remove voxels; returns their material values.
   extract(indices) {
@@ -363,7 +479,7 @@ export class FallingCluster {
     this.landed = true;
     const placed = [];
     for (let k = 0; k < this.indices.length; k++) {
-      if (this.shatters(k)) continue;
+      if (this.shatters(k) || world.ghost[this.colors[k]]) continue;
       const x = this.xs[k], y = this.ys[k] - drop, z = this.zs[k];
       if (y < 0 || !world.inBounds(x, y, z)) continue;
       const i = world.index(x, y, z);

@@ -1,0 +1,52 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>GLB viewer</title>
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#7d8fa3}#info{position:fixed;left:8px;top:8px;color:#fff;font:12px monospace;text-shadow:1px 1px 0 #000;white-space:pre}</style>
+<script type="importmap">{ "imports": { "three": "/vendor/three/build/three.module.js", "three/addons/": "/vendor/three/examples/jsm/" } }</script>
+</head><body><div id="info"></div>
+<script type="module">
+// Dev viewer: /dev/glb.html?file=human_soldier.glb&anim=Walk&t=0.3&cam=0.6&dist=3&y=1&only=StreetLamp
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+const q = new URLSearchParams(location.search);
+const r = new THREE.WebGLRenderer({ antialias: true });
+r.setSize(innerWidth, innerHeight); r.outputColorSpace = THREE.SRGBColorSpace; r.toneMapping = THREE.ACESFilmicToneMapping;
+r.shadowMap.enabled = true;
+document.body.appendChild(r.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x8fa6bf);
+const pm = new THREE.PMREMGenerator(r);
+scene.environment = pm.fromScene(new RoomEnvironment(), 0.04).texture; scene.environmentIntensity = 0.5;
+scene.add(new THREE.HemisphereLight(0xdfe8ff, 0x6a5a4a, 1.2));
+const sun = new THREE.DirectionalLight(0xffffff, 2.6); sun.position.set(3, 6, 4); sun.castShadow = true; scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.MeshLambertMaterial({ color: 0x9a9a9a }));
+ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground); if (q.get('noground')) ground.visible = false;
+const cam = new THREE.PerspectiveCamera(Number(q.get('fov') || 35), innerWidth / innerHeight, 0.01, 200);
+const gltf = await new GLTFLoader().loadAsync('/assets/models/' + (q.get('file') || 'human_soldier.glb'));
+const root = gltf.scene;
+scene.add(root);
+root.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.frustumCulled = false; } });
+const only = q.get('only');
+if (only) root.traverse((o) => { if (o.parent === root) o.visible = o.name.startsWith(only); });
+if (q.get('grid')) { let i = 0; const kids = root.children.slice(); const n = Math.ceil(Math.sqrt(kids.length)); for (const k of kids) { k.position.set((i % n) * 2.5, 0, Math.floor(i / n) * 2.5); i++; } }
+const hide = (q.get('hide') || '').split(',').filter(Boolean);
+if (hide.length) root.traverse((o) => { if (hide.some((h) => o.name.startsWith(h))) o.visible = false; });
+let mixer = null;
+const info = [gltf.animations.map((a) => `${a.name} ${a.duration.toFixed(2)}s`).join('\n')];
+const names = []; root.traverse((o) => { if (o.parent === root) names.push(o.name); }); info.push('top: ' + names.join(', '));
+document.getElementById('info').textContent = info.join('\n');
+if (q.get('anim')) {
+  mixer = new THREE.AnimationMixer(root);
+  const clip = gltf.animations.find((a) => a.name === q.get('anim'));
+  if (clip) { const a = mixer.clipAction(clip); a.play(); mixer.setTime(Number(q.get('t') || 0) * clip.duration); }
+}
+const box = new THREE.Box3().setFromObject(root);
+const c = box.getCenter(new THREE.Vector3());
+const cy = Number(q.get('y') ?? c.y), a = Number(q.get('cam') || 0.6), d = Number(q.get('dist') || box.getSize(new THREE.Vector3()).length() * 1.2);
+const elev = Number(q.get('elev') || 0.15);
+const tx = Number(q.get('tx') ?? c.x), tz = Number(q.get('tz') ?? c.z);
+cam.position.set(tx + Math.sin(a) * d, cy + d * elev, tz + Math.cos(a) * d);
+cam.lookAt(tx, cy, tz);
+r.render(scene, cam);
+window.ready = true;
+</script></body></html>

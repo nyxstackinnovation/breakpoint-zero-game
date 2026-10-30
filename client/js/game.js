@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import {
-  DT, TICK_RATE, INTERP_DELAY_TICKS, VOXEL, PLAYER, RIFLE, ROCKET, PLAYER_COLORS, WEAPON, MAX_HEALTH,
+  DT, TICK_RATE, INTERP_DELAY_TICKS, VOXEL, PLAYER, RIFLE, ROCKET, PLAYER_COLORS, WEAPON, MAX_HEALTH, RESPAWN_SECONDS, BTN,
 } from '/shared/constants.js';
 import { VoxelWorld, FallingCluster } from '/shared/voxelWorld.js';
 import { createMoveState, copyMoveState, stepPlayer } from '/shared/physics.js';
@@ -11,6 +11,10 @@ import { createWeaponState, copyWeaponState, stepWeapons, shotSpread, addBloom, 
 import { encodeInputs, PF } from '/shared/protocol.js';
 import { base64ToBytes, base64ToInt32, dirFromYawPitch, lerpAngle, clamp } from '/shared/util.js';
 import { VoxelRenderer } from './voxels.js';
+import { PropRenderer } from './propsRenderer.js';
+import { loadVoxelTextures } from './textures.js';
+import { MAT_CLASS } from '/shared/materials.js';
+import { PROP_DEFS } from '/shared/props.js';
 import { Effects } from './effects.js';
 import { ViewModel } from './viewmodel.js';
 import { settings, QUALITY } from './settings.js';
@@ -32,6 +36,17 @@ export class ClientGame {
     this.quality = QUALITY[settings.get('quality')] || QUALITY.medium;
     this.voxels = new VoxelRenderer(this.scene);
     this.voxels.setShadows(this.quality.shadows);
+    loadVoxelTextures().then((t) => this.voxels.setTextures(t));
+    this.props = new PropRenderer(this.scene);
+    this.props.setShadows(this.quality.shadows);
+    this.voxels.onVoxelChange = (x, y, z) => this.props.voxelChanged(x, y, z);
+    this.props.onBreak = (rec) => {
+      this.effects.propBreak(rec.pos, this.props.colorFor(rec));
+      const mat = PROP_DEFS[rec.t]?.mat;
+      this.audio.impact(rec.pos, mat === 'metal' ? 'metal' : mat === 'wood' ? 'wood' : 'concrete');
+    };
+    // walls between a sound and the listener muffle it
+    this.audio.occlusion = (pos) => this.world && !this.world.clearLine(this.camera.position.x, this.camera.position.y, this.camera.position.z, pos.x, pos.y + 0.3, pos.z);
     this.effects = new Effects(this.scene, this.quality);
     this.vm = new ViewModel();
     this.vm.scene.environment = this.sm.envMap;
@@ -101,13 +116,21 @@ export class ClientGame {
     const world = new VoxelWorld(sx, sy, sz);
     world.palette.set(msg.palette.slice(0, 256));
     world.hard.set(msg.hard.slice(0, 256));
+    // surface materials (textures, impact sounds) and the invisible collision voxels under props: without
+    // these the client drew prop collision boxes as visible blocks and never removed them when props broke
+    if (msg.mat) world.material.set(msg.mat.slice(0, 256));
+    if (msg.ghost) world.ghost.set(msg.ghost.slice(0, 256));
     world.decodeRLE(base64ToBytes(msg.grid));
     this.world = world;
     this.sm.applyTheme(msg.theme, [sx * VOXEL, sy * VOXEL, sz * VOXEL]);
     this.vm.setLighting(msg.theme);
     this.voxels.setWorld(world);
-    await this.voxels.buildAll((p) => this.app.loadingProgress(p));
+    await this.voxels.buildAll((p) => this.app.loadingProgress(p * 0.92));
     if (token !== this.loadToken) return;
+    await this.props.build(world, msg.props || []);
+    this.app.loadingProgress(1);
+    if (token !== this.loadToken) return;
+    this.audio.setEnvironment(msg.theme);
     for (const c of msg.clusters || []) {
       const idx = base64ToInt32(c.i);
       const colors = base64ToBytes(c.c);
@@ -117,6 +140,7 @@ export class ClientGame {
       this.voxels.addFalling(fc);
     }
     this.effects.setWorld(world);
+    this.effects.setAmbient(msg.theme.fires, msg.theme.plumes);
     for (const ch of this.characters.values()) ch.world = world;
     this.mapName = msg.display;
     this.mapId = msg.name;
@@ -144,6 +168,8 @@ export class ClientGame {
     this.players.clear();
     this.hud.clearPlates();
     this.effects.clear();
+    this.props.clear();
+    for (const id of [...this.audio.loops.keys()]) this.audio.loopStop(id);
     this.voxels.clear();
     this.hud.showDeath(false);
     this.hud.showRoundEnd(false);
@@ -158,6 +184,7 @@ export class ClientGame {
     this.sm.setQuality(this.quality);
     this.voxels.setShadows(this.quality.shadows);
     this.effects.setQuality(this.quality);
+    this.props.setShadows(this.quality.shadows);
     for (const ch of this.characters.values()) ch.root.traverse((o) => { if (o.isMesh) o.castShadow = this.quality.characterShadows; });
   }
 
@@ -264,7 +291,7 @@ export class ClientGame {
     this.wpn.shots = shots;
     const dx = ox - P.x, dy = oy - P.y, dz = oz - P.z;
     const err = Math.hypot(dx, dy, dz);
-    if (err > 3) { this.correction.set(0, 0, 0); copyMoveState(this.prev, P); }
+    if (err > 5) { this.correction.set(0, 0, 0); copyMoveState(this.prev, P); }
     else if (err > 1e-4) {
       this.correction.x += dx; this.correction.y += dy; this.correction.z += dz;
       this.prev.x -= dx; this.prev.y -= dy; this.prev.z -= dz;
@@ -319,6 +346,11 @@ export class ClientGame {
     if (res & 1) this.localFire();
     if (res & 2) this.localRocket(inp);
     if (res & 4) { this.vm.reload(); this.audio.reload(); }
+    // empty gun: a dry click while the trigger is held
+    if ((buttons & BTN.FIRE) && this.wpn.ammo === 0 && !(res & 1)) {
+      const now = performance.now();
+      if (now - (this.lastDry || 0) > 350) { this.lastDry = now; this.audio.dryFire(); }
+    }
     this.pending.push(inp);
     if (this.pending.length > 240) this.pending.shift();
   }
@@ -346,13 +378,16 @@ export class ClientGame {
     const muzzle = this.vm.muzzleWorld(this.camera, new THREE.Vector3());
     this.vm.fire();
     this.audio.rifle(null, true);
-    this.effects.tracer(muzzle, end);
-    this.effects.muzzle(muzzle, true);
+    this.audio.shell();
+    this.effects.tracer(muzzle, end, true);
+    this.effects.muzzle(muzzle, dir, true);
     if (hitChar) {
       this.effects.blood(end, dir.clone().negate());
     } else if (hit) {
       const n = new THREE.Vector3(hit.nx, hit.ny, hit.nz);
-      this.effects.impact(end, n, this.voxels.colorOf(hit.v), this.world.index(hit.x, hit.y, hit.z));
+      const mat = this.world.material[hit.v];
+      this.effects.impact(end, n, this.voxels.colorOf(hit.v), this.world.index(hit.x, hit.y, hit.z), mat);
+      this.audio.impact(end, MAT_CLASS[mat]);
     }
     // recoil
     const kick = RIFLE.recoilPitch * (0.8 + Math.random() * 0.4);
@@ -372,7 +407,8 @@ export class ClientGame {
     this.effects.spawnRocket(`p${inp.seq}`, pos, vel, this.myId);
     this.vm.fireRocket();
     this.audio.rocketLaunch(null, true);
-    this.effects.muzzle(pos, true);
+    this.audio.loopStart(`p${inp.seq}`, pos);
+    this.effects.muzzle(pos, vel.clone().normalize(), true);
     this.shake = Math.max(this.shake, 0.15);
   }
 
@@ -403,14 +439,16 @@ export class ClientGame {
           const start = ch && ch.root.visible ? ch.muzzleWorld(new THREE.Vector3()) : origin;
           if (ch) ch.fire();
           if (ev.h === this.myId) end.addScaledVector(dir, -1.2);
-          this.effects.tracer(start, end);
-          this.effects.muzzle(start, false);
-          this.audio.rifle(start, false);
+          this.effects.tracer(start, end, false);
+          this.effects.muzzle(start, dir, false);
+          this.audio.rifle(start, false, ev.id);
+          this.bulletWhiz(origin, end, dir);
           if (!ev.h && ev.n) {
             const n = new THREE.Vector3(ev.n[0], ev.n[1], ev.n[2]);
             const vx = Math.floor((end.x - n.x * 0.05) / VOXEL), vy = Math.floor((end.y - n.y * 0.05) / VOXEL), vz = Math.floor((end.z - n.z * 0.05) / VOXEL);
-            this.effects.impact(end, n, this.voxels.colorOf(ev.v), this.world.inBounds(vx, vy, vz) ? this.world.index(vx, vy, vz) : undefined);
-            this.audio.impact(end);
+            const mat = this.world.material[ev.v] ?? 1;
+            this.effects.impact(end, n, this.voxels.colorOf(ev.v), this.world.inBounds(vx, vy, vz) ? this.world.index(vx, vy, vz) : undefined, mat);
+            this.audio.impact(end, MAT_CLASS[mat]);
           }
         }
         if (ev.h) {
@@ -428,13 +466,16 @@ export class ClientGame {
         if (ev.owner === this.myId) { this.rocketAlias.set(ev.id, `p${ev.seq}`); break; }
         const p = new THREE.Vector3(...ev.p), v = new THREE.Vector3(...ev.v);
         this.effects.spawnRocket(ev.id, p, v, ev.owner);
-        this.effects.muzzle(p, false);
+        this.effects.muzzle(p, v.clone().normalize(), false);
         this.audio.rocketLaunch(p, false);
+        this.audio.loopStart(ev.id, p);
         break;
       }
       case 'rgone': this.removeRocket(ev.id); break;
       case 'boom': this.onBoom(ev); break;
+      case 'props': for (const id of ev.gone) this.props.breakById(id); break;
       case 'settle': this.onSettle(ev); break;
+      case 'drop': this.spawnClusters(ev.cl, ev.owner); break;
       case 'kill': this.onKill(ev); break;
       case 'spawn': {
         if (ev.id === this.myId) {
@@ -465,14 +506,28 @@ export class ClientGame {
           const ang = Math.atan2(-dx, -dz);
           return -(ang - this.yaw);
         });
-        this.audio.hurt();
+        this.audio.hurt(ev.a > 30);
         this.shake = Math.max(this.shake, Math.min(0.5, ev.a / 80));
+        if (settings.get('shake')) {
+          // kick the view away from where the hit came from (side hits roll, front/back hits pitch)
+          const dx = from.x - this.pred.x, dz = from.z - this.pred.z;
+          const rel = Math.atan2(-dx, -dz) - this.yaw;
+          const k = Math.min(1, ev.a / 40);
+          this.punch = this.punch || { p: 0, r: 0, vp: 0, vr: 0 };
+          this.punch.vr += Math.sin(rel) * 2.2 * k;
+          this.punch.vp += Math.cos(rel) * 1.6 * k;
+        }
         break;
       }
       case 'hit': {
         const kind = ev.k ? 2 : ev.h ? 1 : 0;
         this.hud.hitmarker(kind);
         this.audio.hitmarker(kind);
+        const victim = this.characters.get(ev.v);
+        if (victim) {
+          victim.hit?.();
+          this.hud.damageNumber(ev.v, ev.a, kind, _v.copy(victim.root.position).add(_v2.set(0, ev.h ? 2.05 : 1.75, 0)));
+        }
         break;
       }
       case 'heal': this.hud.heal(ev.a); this.audio.heal(); break;
@@ -495,8 +550,9 @@ export class ClientGame {
 
   removeRocket(id) {
     const alias = this.rocketAlias.get(id);
-    if (alias) { this.effects.removeRocket(alias); this.rocketAlias.delete(id); }
+    if (alias) { this.effects.removeRocket(alias); this.audio.loopStop(alias); this.rocketAlias.delete(id); }
     this.effects.removeRocket(id);
+    this.audio.loopStop(id);
   }
 
   onBoom(ev) {
@@ -516,19 +572,30 @@ export class ClientGame {
     const dist = p.distanceTo(this.camera.position);
     this.audio.explosion(p, dist);
     this.shake = Math.max(this.shake, Math.max(0, 1.1 - dist / 22));
-    for (const cl of ev.cl || []) {
+    // a blast right next to you washes the screen out for a moment
+    if (dist < 9 && this.world.clearLine(this.camera.position.x, this.camera.position.y, this.camera.position.z, p.x, p.y, p.z)) this.hud.blast((1 - dist / 9) * 0.8);
+    this.spawnClusters(ev.cl, ev.owner);
+  }
+
+  // Chunks the server cut loose: d = crumble to debris right away, otherwise fall as a rigid body.
+  spawnClusters(list, owner) {
+    const w = this.world;
+    const tmp = [0, 0, 0];
+    for (const cl of list || []) {
       const idx = base64ToInt32(cl.i);
       const cols = w.extract(idx);
       if (cl.d) {
-        for (let k = 0; k < idx.length; k++) {
+        const st = Math.max(1, Math.floor(idx.length / 160));
+        for (let k = 0; k < idx.length; k += st) {
           w.coords(idx[k], tmp);
           this.effects.debris.spawn((tmp[0] + 0.5) * VOXEL, (tmp[1] + 0.5) * VOXEL, (tmp[2] + 0.5) * VOXEL, (Math.random() - 0.5) * 4, Math.random() * 3, (Math.random() - 0.5) * 4, 0.35, this.voxels.colorOf(cols[k]));
         }
         continue;
       }
-      const fc = new FallingCluster(cl.id, w, idx, cols, ev.owner);
+      const fc = new FallingCluster(cl.id, w, idx, cols, owner);
       this.clusters.set(cl.id, fc);
       this.voxels.addFalling(fc);
+      this.voxels.rebuildBox(fc.min[0], fc.min[1], fc.min[2], fc.max[0], fc.max[1], fc.max[2]);
       const cx = (fc.min[0] + fc.max[0] + 1) * 0.5 * VOXEL, cz = (fc.min[2] + fc.max[2] + 1) * 0.5 * VOXEL;
       this.audio.crumble(new THREE.Vector3(cx, fc.min[1] * VOXEL, cz), Math.log2(idx.length));
     }
@@ -539,6 +606,7 @@ export class ClientGame {
     if (!fc) return;
     const w = this.world;
     fc.settle(w, ev.d);
+    this.voxels.rebuildBox(fc.min[0], fc.min[1] - ev.d, fc.min[2], fc.max[0], fc.max[1] - ev.d, fc.max[2]);
     this.voxels.removeFalling(ev.id);
     this.clusters.delete(ev.id);
     const shattered = [];
@@ -561,10 +629,19 @@ export class ClientGame {
     if (victim) victim.d++;
     if (killer && ev.k !== ev.v) killer.k++;
     this.hud.killfeed(ev.k, ev.v, ev.w, ev.h, this.myId, (id) => this.name(id));
+    const victimColor = PLAYER_COLORS[(ev.v - 1) % PLAYER_COLORS.length];
+    // where was the killer standing? (for the direction the victim falls)
+    let from = null;
+    if (ev.k === this.myId) from = new THREE.Vector3(this.pred.x, this.pred.y, this.pred.z);
+    else if (this.characters.get(ev.k)) from = this.characters.get(ev.k).root.position.clone();
     const ch = this.characters.get(ev.v);
     if (ch) {
       if (ev.p) ch.root.position.set(ev.p[0], ev.p[1], ev.p[2]);
-      ch.die(ev.f || [0, 0, 0], this.world);
+      ch.die(ev.f || [0, 0, 0], this.world, { weapon: ev.w, head: !!ev.h, from });
+      ch.diedAt = performance.now();
+      const pos = ch.root.position.clone().add(_v3.set(0, 1.1, 0));
+      this.effects.eliminationBurst(pos, victimColor);
+      if (ev.h) this.effects.blood(pos.clone().add(_v3.set(0, 0.5, 0)), from ? pos.clone().sub(from).setY(0.3).normalize() : _v3.set(0, 1, 0), true);
     }
     if (ev.v === this.myId) {
       this.alive = false;
@@ -572,14 +649,41 @@ export class ClientGame {
       this.respawnAt = performance.now() + 3000;
       this.deathCam = { pos: this.camera.position.clone(), yaw: this.yaw, t: 0, from: new THREE.Vector3(this.pred.x, this.pred.y, this.pred.z) };
       this.hud.showDeath(true, ev.k && ev.k !== ev.v ? this.name(ev.k) : '', ev.w);
+      // killcam card: how much health the killer had left
+      const last = this.snapshots[this.snapshots.length - 1];
+      const kp = last && last.map.get(ev.k);
+      this.hud.deathKiller(kp && ev.k !== ev.v ? `${escapeHtml(this.name(ev.k))} HAD <b>${kp.health} HP</b> LEFT${ev.h ? ' · HEADSHOT' : ''}` : '');
       this.vm.cancelReload();
+      this.audio.hurt(true);
     }
     if (ev.k === this.myId && ev.v !== this.myId) {
-      const streak = { 2: 'DOUBLE KILL', 3: 'TRIPLE KILL', 4: 'RAMPAGE', 5: 'UNSTOPPABLE' }[Math.min(ev.s, 5)] || '';
-      const extra = ev.w === WEAPON.CRUSH ? 'DEMOLITION KILL' : ev.h ? 'HEADSHOT' : streak;
-      this.hud.centerMessage(`ELIMINATED <span style="color:${hex(PLAYER_COLORS[(ev.v - 1) % PLAYER_COLORS.length])}">${escapeHtml(this.name(ev.v))}</span>${extra ? `<small>${extra}</small>` : ''}`);
+      const kind = ev.w === WEAPON.CRUSH ? 'crush' : ev.h ? 'head' : ev.w === WEAPON.ROCKET ? 'rocket' : '';
+      this.hud.killBanner(this.name(ev.v), hex(victimColor), kind, '+50 HP', ev.s || 1);
+      this.audio.elimination(ev.s || 1);
+      this.killZoom = 1;
+      this.shake = Math.max(this.shake, 0.12);
     }
   }
+
+  // a remote bullet passing near our head
+  bulletWhiz(origin, end, dir) {
+    if (!this.alive) return;
+    const cam = this.camera.position;
+    const t = _v2.copy(cam).sub(origin).dot(dir);
+    const len = origin.distanceTo(end);
+    if (t < 1 || t > len + 0.5) return;
+    const closest = origin.clone().addScaledVector(dir, t);
+    const d = closest.distanceTo(cam);
+    if (d < 2.6) this.audio.whiz(closest, d < 0.9);
+  }
+
+  surfaceClass(x, y, z) {
+    const w = this.world;
+    if (!w) return 'concrete';
+    const v = w.get(Math.floor(x / VOXEL), Math.floor((y - 0.1) / VOXEL), Math.floor(z / VOXEL));
+    return v ? (MAT_CLASS[w.material[v]] || 'concrete') : 'concrete';
+  }
+
 
   // ------------------------------------------------------------------ frame
 
@@ -615,13 +719,34 @@ export class ClientGame {
     this.correction.multiplyScalar(decay);
 
     // falling chunks (visual simulation, server confirms landing)
-    for (const fc of this.clusters.values()) if (!fc.landed) fc.step(this.world, Math.min(dt, 0.05));
+    // falling chunks and debris move in real time even when the frame rate drops badly (the frame dt is
+    // capped at 0.25 s; this one only at 1 s), in small steps for clean collisions
+    const nowMs = performance.now();
+    const fxDt = Math.min(1, Math.max(0, (nowMs - (this.lastFxMs || nowMs)) / 1000));
+    this.lastFxMs = nowMs;
+    for (const fc of this.clusters.values()) for (let rem = fxDt; rem > 1e-4 && !fc.landed; rem -= 0.05) fc.step(this.world, Math.min(rem, 0.05));
     this.voxels.updateFalling();
     this.voxels.update(this.clusters.size ? 14 : 8);
 
     this.updateCamera(dt, alpha);
     this.updateRemotes(dt);
-    this.effects.update(dt, this.camera, this.scene.fog);
+    this.hud.updateDamageNumbers(dt, this.camera, window.innerWidth, window.innerHeight);
+    // weapon status under the crosshair
+    if (!this.alive || this.serverState !== 'playing') this.hud.weaponHint('', '');
+    else if (this.wpn.reload > 0) this.hud.weaponHint('RELOADING', '');
+    else if (this.wpn.ammo === 0) this.hud.weaponHint('NO AMMO — PRESS R', 'bad');
+    else if (this.wpn.ammo <= 6) this.hud.weaponHint('LOW AMMO', 'warn');
+    else this.hud.weaponHint('', '');
+    this.effects.update(dt, this.camera, this.scene.fog, fxDt);
+    for (const [id, r] of this.effects.rockets) {
+      const toward = -_v.copy(r.pos).sub(this.camera.position).normalize().dot(r.vel);
+      this.audio.loopMove(id, r.pos, toward);
+    }
+    for (const id of this.audio.loops.keys()) if (!this.effects.rockets.has(id)) this.audio.loopStop(id);
+    if (this.alive && this.health > 0 && this.health <= 30) {
+      this.heartT = (this.heartT || 0) - dt;
+      if (this.heartT <= 0) { this.heartT = 0.75 + this.health / 60; this.audio.heartbeat(); }
+    }
     this.sm.update(dt);
     const speed = Math.hypot(this.pred.vx, this.pred.vz);
     this.vm.update(dt, { speed, onGround: this.pred.onGround, mouseDX: mdx, mouseDY: mdy, alive: this.alive && !this.deathCam });
@@ -633,14 +758,15 @@ export class ClientGame {
     // footsteps
     if (this.alive && this.pred.onGround && speed > 2.5) {
       this.stepDist += speed * dt;
-      if (this.stepDist > 2.3) { this.stepDist = 0; this.audio.footstep(null, true); }
+      if (this.stepDist > 2.3) { this.stepDist = 0; this.audio.footstep(null, true, this.surfaceClass(this.pred.x, this.pred.y, this.pred.z)); }
     }
     return true;
   }
 
   updateCamera(dt, alpha) {
     const cam = this.camera;
-    cam.fov = settings.get('fov');
+    this.killZoom = Math.max(0, (this.killZoom || 0) - dt * 3);
+    cam.fov = settings.get('fov') - Math.sin(Math.min(1, this.killZoom) * Math.PI) * 4;
     cam.updateProjectionMatrix();
     const shakeOn = settings.get('shake');
     this.shake = Math.max(0, this.shake - dt * 1.8);
@@ -655,7 +781,19 @@ export class ClientGame {
       if (this.camY !== null && P.onGround && ey > this.camY && ey - this.camY < 0.7) ey = this.camY + (ey - this.camY) * (1 - Math.exp(-dt * 22));
       this.camY = ey;
       cam.position.set(x + (Math.random() - 0.5) * sh * 0.3, ey + (Math.random() - 0.5) * sh * 0.3, z + (Math.random() - 0.5) * sh * 0.3);
-      cam.rotation.set(this.pitch + (Math.random() - 0.5) * sh * 0.05, this.yaw + (Math.random() - 0.5) * sh * 0.05, 0);
+      // view punch from taking a hit: a quick tilt away from the shooter that springs back
+      this.punch = this.punch || { p: 0, r: 0, vp: 0, vr: 0 };
+      const pu = this.punch, kS = 160, kD = 18;
+      // small fixed substeps: one big step at a low frame rate made the spring blow up and roll the view over
+      const pn = Math.min(40, Math.ceil(dt / 0.008)), ph = dt / pn;
+      for (let s = 0; s < pn; s++) {
+        pu.vp += (-kS * pu.p - kD * pu.vp) * ph; pu.p += pu.vp * ph;
+        pu.vr += (-kS * pu.r - kD * pu.vr) * ph; pu.r += pu.vr * ph;
+      }
+      pu.p = Math.max(-0.12, Math.min(0.12, pu.p)); pu.r = Math.max(-0.12, Math.min(0.12, pu.r));
+      if (!Number.isFinite(pu.p + pu.r + pu.vp + pu.vr)) { pu.p = pu.r = pu.vp = pu.vr = 0; }
+      cam.rotation.order = 'YXZ';
+      cam.rotation.set(this.pitch + pu.p + (Math.random() - 0.5) * sh * 0.05, this.yaw + (Math.random() - 0.5) * sh * 0.05, pu.r);
     } else if (this.deathCam) {
       const d = this.deathCam;
       d.t += dt;
@@ -681,14 +819,20 @@ export class ClientGame {
       if (!s) { ch.setVisible(false); this.hud.updatePlate(id, false); continue; }
       const alive = (s.flags & PF.ALIVE) !== 0;
       if (!alive && !ch.dead) { ch.setVisible(false); this.hud.updatePlate(id, false); continue; }
-      if (alive && ch.dead) ch.respawn();
+      if (ch.dead) {
+        // The kill event arrives before the delayed (interpolated) snapshots show the death, so 'alive'
+        // here is old news: keep playing the death animation. The 'spawn' event brings them back; the
+        // timeout only covers a missed event.
+        if (alive && performance.now() - (ch.diedAt || 0) > (RESPAWN_SECONDS + 1.5) * 1000) ch.respawn();
+        else { ch.update(dt, null); this.hud.updatePlate(id, false); continue; }
+      }
       if (alive && !ch.root.visible) ch.setVisible(true);
       ch.update(dt, { x: s.x, y: s.y, z: s.z, yaw: s.yaw, pitch: s.pitch, vx: s.vx, vy: s.vy, vz: s.vz, onGround: (s.flags & PF.GROUND) !== 0, launcher: (s.flags & PF.ROCKET) !== 0 });
       // remote footsteps
       const sp = Math.hypot(s.vx, s.vz);
       if (alive && (s.flags & PF.GROUND) && sp > 3) {
         ch.stepAcc = (ch.stepAcc || 0) + sp * dt;
-        if (ch.stepAcc > 2.3) { ch.stepAcc = 0; this.audio.footstep(_v.set(s.x, s.y, s.z), false); }
+        if (ch.stepAcc > 2.3) { ch.stepAcc = 0; this.audio.footstep(_v.set(s.x, s.y, s.z), false, this.surfaceClass(s.x, s.y, s.z)); }
       }
       // nameplate with health bar
       if (!alive || !showNames) { this.hud.updatePlate(id, false); continue; }
@@ -717,6 +861,7 @@ export class ClientGame {
     this.hud.update(dt, {
       health: this.alive ? this.health : 0, ammo: this.wpn.ammo, reload: this.wpn.reload, rockets: this.wpn.rockets, rocketRegen: this.wpn.rocketRegen,
       spread: this.alive ? shotSpread(this.wpn, this.pred) : 0, timer, mapName: this.mapName || '', rank, alive: this.alive, playing: this.serverState === 'playing',
+      kills: me ? me.k : 0, deaths: me ? me.d : 0,
     });
     if (this.app.scoreboardOpen || this.serverState === 'intermission') {
       this.hud.renderScoreboard(sorted.map((p) => ({ id: p.id, name: p.name, k: p.k, d: p.d, ping: p.ping, bot: p.bot })), this.myId, 'SCOREBOARD', `${this.mapName} · FREE FOR ALL`);

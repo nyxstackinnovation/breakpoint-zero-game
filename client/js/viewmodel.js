@@ -5,6 +5,9 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { buildRifle, buildLauncher, buildMagazine, weaponMaterials } from './weaponModels.js';
 import { PLAYER_COLORS } from '/shared/constants.js';
+import { operatorFor } from './operators.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { buildFPArms, createFPMaterials, paintFPMaterials } from './fpHands.js';
 
 class Spring {
   constructor(k = 120, d = 14) { this.x = 0; this.v = 0; this.k = k; this.d = d; this.target = 0; }
@@ -140,10 +143,100 @@ export class ViewModel {
     this.launcherBlend = 0;
     this.launcherHold = 0;
     this.drawT = 0;
+    this.teamColor = new THREE.Color(0xff3b5c);
+    this.loaded = this.loadModels();
+  }
+
+  // Swap in the Blender-made rifle, launcher and first-person arms (weapons.glb + fp_arms.glb).
+  async loadModels() {
+    let weapons, arms;
+    try {
+      const loader = new GLTFLoader();
+      [weapons, arms] = await Promise.all([loader.loadAsync('/assets/models/weapons.glb'), loader.loadAsync('/assets/models/fp_arms.glb')]);
+    } catch (e) {
+      console.warn('Blender weapon models unavailable, using procedural viewmodel', e);
+      return false;
+    }
+    const W = weapons.scene, A = arms.scene;
+    const get = (root, n) => root.getObjectByName(n);
+    const eye = get(A, 'EyeFP');
+    const armsMesh = get(A, 'ArmsFP');
+    if (!eye || !armsMesh || !get(W, 'RifleFP') || !get(W, 'LauncherFP')) return false;
+    this.armMaterials = [];
+    // hands and forearms are built in code (fpHands.js) so they read as real hands at this distance
+    this.fpMats = createFPMaterials();
+    paintFPMaterials(this.fpMats, operatorFor(this.opId || 1).fp, this.teamColor);
+    const prepArms = () => buildFPArms(operatorFor(this.opId || 1).fp, this.fpMats);
+    this.builtOp = operatorFor(this.opId || 1).name;
+    void armsMesh;
+    const eyeR = eye.position.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+    // frame: weapon space (glTF +Z forward) turned to face -Z, eye moved to the origin
+    const makeFrame = () => {
+      const f = new THREE.Group();
+      f.rotation.y = Math.PI;
+      const outer = new THREE.Group();
+      outer.add(f);
+      f.position.set(0, 0, 0);
+      // origin = pistol grip; the holder places the grip in camera space
+      return { outer, f };
+    };
+    // rifle
+    const R = makeFrame();
+    const rifle = get(W, 'RifleFP').clone();
+    const mag = get(W, 'MagazineFP').clone();
+    const armsR = prepArms(); armsR.userData.fpArms = true;
+    R.f.add(rifle, mag, armsR);
+    R.f.userData.muzzle = new THREE.Vector3(0, 0.09, 0.735);
+    R.f.userData.eject = new THREE.Vector3(-0.028, 0.098, 0.035);
+    this.rifleHolder.remove(this.rifle);
+    this.rifleHolder.add(R.outer);
+    this.rifle = R.f;
+    this.mag = mag;
+    this.magBase = mag.position.clone();
+    this.leftArmR = new THREE.Group();
+    this.flash.position.copy(R.f.userData.muzzle);
+    this.flash.rotation.set(0, Math.PI, 0);
+    R.f.add(this.flash);
+    // launcher
+    const L = makeFrame();
+    const launcher = get(W, 'LauncherFP').clone();
+    const warhead = get(W, 'WarheadFP').clone();
+    const armsL = prepArms(); armsL.userData.fpArms = true;
+    L.f.add(launcher, warhead, armsL);
+    L.f.userData.muzzle = new THREE.Vector3(0, 0.2, 0.6);
+    L.f.userData.rear = new THREE.Vector3(0, 0.2, -0.6);
+    L.f.userData.warhead = warhead;
+    this.launcherHolder.remove(this.launcher);
+    this.launcherHolder.add(L.outer);
+    this.launcher = L.f;
+    this.rflash.position.copy(L.f.userData.muzzle);
+    this.backblast.position.copy(L.f.userData.rear);
+    L.f.add(this.rflash, this.backblast);
+    for (const root of [R.f, L.f]) root.traverse((o) => { if (o.isMesh) o.frustumCulled = false; });
+    // hip-fire framing relative to the eye (the authored pose looks straight down the sights)
+    this.rifleBase.set(0.14, -0.195, -0.41);
+    this.launcherBase.set(0.2, -0.3, -0.28);
+    this.fromBlender = true;
+    return true;
   }
 
   setColor(id) {
     this.bandMat.color.setHex(PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length]);
+    this.teamColor.setHex(PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length]);
+    for (const m of this.armMaterials || []) m.color.copy(this.teamColor);
+    const op = operatorFor(id);
+    const rebuild = (this.builtOp || 'Viper') !== op.name;
+    this.opId = id;
+    if (this.fpMats) paintFPMaterials(this.fpMats, op.fp, this.teamColor);
+    // sleeve style / glove type differ per operator: swap the arm meshes
+    if (rebuild && this.fpMats) for (const root of [this.rifle, this.launcher]) {
+      const old = root.children.find((c) => c.userData.fpArms);
+      if (old) root.remove(old);
+      const arms = buildFPArms(op.fp, this.fpMats);
+      arms.userData.fpArms = true;
+      root.add(arms);
+    }
+    if (this.fpMats) this.builtOp = op.name;
   }
 
   setLighting(theme) {

@@ -72,17 +72,21 @@ test('two clients quick-match into the same room and the server simulates their 
     await a.until(() => a.snaps.some((s) => s.players.some((p) => p.id === jb.id && (p.flags & PF.ALIVE))));
     const startSnap = a.snaps[a.snaps.length - 1];
     const me0 = startSnap.players.find((p) => p.id === ja.id);
-    // walk forward for ~1.5 s worth of inputs, sent in real time
-    let seq = 1;
+    // walk for ~1.5 s worth of inputs, sent in real time, turning a quarter each half second so a wall
+    // right in front of the spawn point cannot hide that the server is moving us
+    let seq = 1, moved = 0;
     for (let i = 0; i < 18; i++) {
       const batch = [];
-      for (let k = 0; k < 5; k++) batch.push({ seq: seq++, buttons: BTN.FORWARD, yaw: me0.yaw, pitch: 0, renderTick: startSnap.tick });
+      const yaw = me0.yaw + Math.floor(i / 6) * (Math.PI / 2);
+      for (let k = 0; k < 5; k++) batch.push({ seq: seq++, buttons: BTN.FORWARD, yaw, pitch: 0, renderTick: startSnap.tick });
       a.ws.send(Buffer.from(encodeInputs(batch)));
       await new Promise((r) => setTimeout(r, 80));
+      const s = a.snaps[a.snaps.length - 1], p = s && s.players.find((q) => q.id === ja.id);
+      if (p) moved = Math.max(moved, Math.hypot(p.x - me0.x, p.z - me0.z));
     }
     await a.until(() => { const s = a.snaps[a.snaps.length - 1]; const p = s.players.find((q) => q.id === ja.id); return p && p.lastSeq >= seq - 1; }, 5000);
     const me1 = a.snaps[a.snaps.length - 1].players.find((p) => p.id === ja.id);
-    const moved = Math.hypot(me1.x - me0.x, me1.z - me0.z);
+    moved = Math.max(moved, Math.hypot(me1.x - me0.x, me1.z - me0.z));
     assert.ok(moved > 1.0 || !(me1.flags & PF.ALIVE), `moved ${moved.toFixed(2)} m`);
     // both clients see the same players, including bots
     const lastB = b.snaps[b.snaps.length - 1];

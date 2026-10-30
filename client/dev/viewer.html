@@ -30,9 +30,14 @@ const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.05, 1
 let tick = null;
 if (mode === 'vm') {
   const vm = new ViewModel();
+  await vm.loaded;
+  if (q.get('base')) vm.rifleBase.fromArray(q.get('base').split(',').map(Number));
   vm.scene.environment = env; vm.scene.environmentIntensity = 0.8;
   vm.resize(innerWidth / innerHeight);
   if (q.get('base')) vm.rifleBase.fromArray(q.get('base').split(',').map(Number));
+  if (q.get('id')) vm.setColor(Number(q.get('id')));
+  if (q.get('vfov')) { vm.camera.fov = Number(q.get('vfov')); vm.camera.updateProjectionMatrix(); }
+  if (q.get('rot')) vm.rifleHolder.children[0].rotation.fromArray(q.get('rot').split(',').map(Number));
   if (q.get('reload')) vm.reload();
   if (q.get('rocket')) vm.fireRocket();
   if (q.get('fire')) vm.fire();

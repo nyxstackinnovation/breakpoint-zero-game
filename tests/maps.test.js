@@ -4,14 +4,14 @@ import { generateMap, MAP_NAMES } from '../shared/maps.js';
 import { VOXEL, MAP_ROTATION } from '../shared/constants.js';
 import { findPath } from '../server/nav.js';
 
-test('four maps exist and match the rotation', () => {
-  assert.equal(MAP_NAMES.length, 4);
+test('three maps exist and match the rotation', () => {
+  assert.equal(MAP_NAMES.length, 3);
   assert.deepEqual([...MAP_NAMES].sort(), [...MAP_ROTATION].sort());
   assert.ok(MAP_NAMES.includes('skyline'));
 });
 
 for (const name of MAP_NAMES) {
-  test(`${name}: deterministic generation, bedrock, spawns and destructible structures`, () => {
+  test(`${name}: deterministic generation, bedrock, spawns, solid ground and destructible structures`, () => {
     const a = generateMap(name, 42), b = generateMap(name, 42);
     assert.deepEqual(a.world.data, b.world.data);
     const w = a.world;
@@ -20,13 +20,16 @@ for (const name of MAP_NAMES) {
     // plenty of standable spawn points
     assert.ok(a.spawns.length >= 16, `${a.spawns.length} spawns`);
     for (const s of a.spawns) assert.ok(w.standable(Math.floor(s[0] / VOXEL), Math.round(s[1] / VOXEL), Math.floor(s[2] / VOXEL)));
-    // everything inside the arena above the bedrock is destructible
-    let solid = 0, soft = 0;
+    // the ground is indestructible; everything standing on it (inside the arena wall) is destructible
+    let solid = 0, soft = 0, groundCells = 0, hardGround = 0;
     for (let y = 1; y < w.sy; y++) for (let z = 1; z < w.sz - 1; z++) for (let x = 1; x < w.sx - 1; x++) {
       const v = w.data[w.index(x, y, z)];
-      if (v) { solid++; if (!w.hard[v]) soft++; }
+      if (!v || w.ghost[v]) continue;
+      if (y < w.terrainTop[z * w.sx + x]) { groundCells++; if (w.hard[v]) hardGround++; continue; }
+      solid++; if (!w.hard[v]) soft++;
     }
     assert.equal(soft, solid);
+    assert.ok(hardGround / groundCells > 0.99, `${hardGround}/${groundCells} ground cells indestructible`);
     // tall buildings exist
     let tall = 0;
     for (let x = 0; x < w.sx; x += 2) for (let z = 0; z < w.sz; z += 2) if (w.topSolid(x, z) > 18) tall++;

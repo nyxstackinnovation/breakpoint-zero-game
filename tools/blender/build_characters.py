@@ -333,8 +333,8 @@ def build_body(mats):
     waist = V((0, 0.012, 1.06), 0.128)
     chest = V((0, 0.0, 1.22), 0.15)
     upch = V((0, 0.0, 1.36), 0.158)
-    nb = V((0, 0.012, 1.47), 0.058)
-    nt = V((0, 0.012, 1.60), 0.052)
+    nb = V((0, 0.012, 1.47), 0.064)
+    nt = V((0, 0.012, 1.60), 0.056)
     edges += [(pel, waist), (waist, chest), (chest, upch), (upch, nb), (nb, nt)]
     for sx in (1, -1):
         cl = V((0.09 * sx, 0.01, 1.43), 0.07)
@@ -435,10 +435,10 @@ def build_head(mats, Hhead):
     parts = [ob]
     hc = ob.location.copy()
     for sx in (1, -1):
-        eye = sphere(f'eye{sx}', 0.0125, hc + Vector((0.032 * sx, -0.074, 0.017)), mat=mats['EyeWhite'], segs=16, rings=12)
-        iris = cylinder(f'iris{sx}', 0.0062, 0.0062, 0.002, hc + Vector((0.032 * sx, -0.0865, 0.017)), (math.radians(90), 0, 0), mat=mats['Iris'], segs=14)
-        pupil = cylinder(f'pupil{sx}', 0.003, 0.003, 0.002, hc + Vector((0.032 * sx, -0.0875, 0.017)), (math.radians(90), 0, 0), mat=mats['Pupil'], segs=10)
-        brow = box(f'brow{sx}', (0.03, 0.008, 0.006), hc + Vector((0.034 * sx, -0.084, 0.04)), (0, 0.12 * sx, 0), mat=mats['Hair'], bevel=0.002)
+        eye = sphere(f'eye{sx}', 0.0115, hc + Vector((0.032 * sx, -0.0705, 0.017)), mat=mats['EyeWhite'], segs=16, rings=12)
+        iris = cylinder(f'iris{sx}', 0.0062, 0.0062, 0.002, hc + Vector((0.032 * sx, -0.0815, 0.017)), (math.radians(90), 0, 0), mat=mats['Iris'], segs=14)
+        pupil = cylinder(f'pupil{sx}', 0.003, 0.003, 0.002, hc + Vector((0.032 * sx, -0.0823, 0.017)), (math.radians(90), 0, 0), mat=mats['Pupil'], segs=10)
+        brow = box(f'brow{sx}', (0.03, 0.008, 0.006), hc + Vector((0.034 * sx, -0.081, 0.036)), (0, 0.12 * sx, 0), mat=mats['Hair'], bevel=0.002)
         ear = sphere(f'ear{sx}', 1.0, hc + Vector((0.074 * sx, 0.006, 0.0)), (0.011, 0.024, 0.033), mat=mats['Skin'], segs=12, rings=10)
         parts += [eye, iris, pupil, brow, ear]
     head = join(parts, 'Head')
@@ -477,11 +477,11 @@ def hairline(u, w, h):
 
 def build_headgear(mats, hc):
     out = []
-    out.append(shell('Var_HairShort', hc, (1.05, 1.04, 1.04), hairline, mats['Hair'], noise=0.05, seed=2))
-    out.append(shell('Var_HairBuzz', hc, (1.015, 1.012, 1.012), hairline, mats['Hair'], noise=0.01, seed=3))
-    out.append(shell('Var_Beard', hc, (1.03, 1.03, 1.02),
+    out.append(shell('Var_HairShort', hc, (1.1, 1.12, 1.07), hairline, mats['Hair'], noise=0.012, seed=2))
+    out.append(shell('Var_HairBuzz', hc, (1.06, 1.09, 1.035), hairline, mats['Hair'], noise=0.0, seed=3))
+    out.append(shell('Var_Beard', hc, (1.07, 1.06, 1.04),
                      lambda u, w, h: w > 0.05 and -0.95 < h < -0.12 and not (abs(u) < 0.32 and -0.46 < h < -0.3) and abs(u) < 0.95,
-                     mats['Hair'], noise=0.08, seed=4))
+                     mats['Hair'], noise=0.015, seed=4))
     # helmet
     helmet = shell('Var_Helmet', hc + Vector((0, 0.006, 0.012)), (1.33, 1.24, 1.2), lambda u, w, h: h > (0.08 if w > 0.3 else -0.1), mats['HelmetMat'], noise=0.0)
     parts = [helmet]
@@ -600,6 +600,8 @@ def build_gear(mats):
         x, y = math.sin(ang) * 0.165, -math.cos(ang) * 0.13
         belt.append(box(f'bpouch{i}', (0.06, 0.04, 0.07), (x, y + 0.012, 0.95), (0, 0, -ang), mat=mats['Vest'], bevel=0.006))
     gear['Belt'] = join(belt, 'Belt')
+    collar = cylinder('collar', 0.078, 0.07, 0.05, (0, 0.01, 1.475), mat=mats['Shirt'], segs=20, bevel=0.006)
+    gear['Collar'] = collar
     holster = [box('holster', (0.05, 0.09, 0.17), (-0.17, 0.0, 0.78), mat=mats['Webbing'], bevel=0.01),
                box('pistolgrip', (0.03, 0.04, 0.05), (-0.17, 0.0, 0.88), mat=mats['Rubber'], bevel=0.006),
                box('legstrap', (0.12, 0.13, 0.025), (-0.12, 0.004, 0.74), mat=mats['Webbing'], bevel=0.004)]
@@ -866,6 +868,9 @@ def death_params(name, time_s):
 
 
 def keyframe_clip(arm, rig, poser, name, frames, param_fn):
+    old = bpy.data.actions.get(name)
+    if old is not None:
+        bpy.data.actions.remove(old, do_unlink=True)
     act = bpy.data.actions.new(name)
     act.use_fake_user = True
     arm.animation_data_create()
@@ -975,6 +980,7 @@ def build_all():
     gear = build_gear(mats)
     skin_auto(gear['Vest'], arm, ['Spine', 'Chest', 'UpperChest'], power=4, top=2)
     skin_rigid(gear['Belt'], arm, 'Hips')
+    skin_auto(gear['Collar'], arm, ['UpperChest', 'Neck'], power=4, top=2)
     skin_rigid(gear['Holster'], arm, 'UpperLeg.R')
     skin_rigid(gear['KneePad_L'], arm, 'LowerLeg.L')
     skin_rigid(gear['KneePad_R'], arm, 'LowerLeg.R')

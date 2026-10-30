@@ -18,7 +18,7 @@ export class Room {
     this.players = new Map();
     this.hostId = 0;
     this.state = 'lobby';
-    this.settings = { map: 'skyline', bots: isPublic ? QUICK_BOTS : 3, difficulty: 'medium', rotation: true };
+    this.settings = { map: 'skyline', bots: isPublic ? QUICK_BOTS : 3, difficulty: isPublic ? 'easy' : 'medium', rotation: true };
     this.game = null;
     this.createdAt = Date.now();
     this.botNameIndex = Math.floor(Math.random() * BOT_NAMES.length);
@@ -95,6 +95,7 @@ export class Room {
     if (this.state === 'game') return;
     this.state = 'game';
     this.game = new Game(this);
+    this.game.clock = () => performance.now();
     for (const p of this.players.values()) p.state = 'idle';
     this.game.loadMap(this.settings.map);
     this.syncBots();
@@ -194,18 +195,26 @@ export class RoomManager {
     throw new Error('could not allocate room code');
   }
 
-  quickMatch(conn, name) {
+  quickMatch(conn, name, difficulty = 'easy', map = 'any') {
     this.leave(conn);
+    // one set of public rooms per bot skill: players who picked Hard only meet Hard bots
+    if (!BOT_DIFFICULTY[difficulty]) difficulty = 'easy';
+    // a chosen map only joins rooms locked to that map; "any" joins whichever room is busiest
+    if (!MAP_INFO[map]) map = 'any';
     let best = null;
     for (const r of this.rooms.values()) {
-      if (!r.isPublic) continue;
+      if (!r.isPublic || r.settings.difficulty !== difficulty) continue;
+      if (map !== 'any' && r.settings.quickMap !== map) continue;
       const h = r.humans().length;
       if (h >= MAX_PLAYERS) continue;
       if (!best || h > best.humans().length) best = r;
     }
     if (!best) {
       best = new Room(this, { isPublic: true, code: this.makeCode() });
-      best.settings.map = MAP_ROTATION[Math.floor(Math.random() * MAP_ROTATION.length)];
+      best.settings.map = map !== 'any' ? map : MAP_ROTATION[Math.floor(Math.random() * MAP_ROTATION.length)];
+      best.settings.difficulty = difficulty;
+      best.settings.quickMap = map;
+      best.settings.rotation = map === 'any'; // a picked map stays on that map round after round
       this.rooms.set(best.code, best);
       best.addHuman(conn, name);
       best.start();

@@ -35,6 +35,7 @@ export const PLAYER = {
   gravity: 24,
   jumpVelocity: 8.4,
   stepHeight: 0.51,     // automatic step up one voxel
+  mantleHeight: 0.72,   // in the air: climb over a ledge this far above the feet (a jump reaches ~1.4 m, so 2 m walls)
   maxFallSpeed: 45,
   headTop: 1.86,
   headBottom: 1.44,
@@ -42,7 +43,7 @@ export const PLAYER = {
 };
 
 export const RIFLE = {
-  damage: 15,
+  damage: 25,         // 4 body hits or 2 headshots
   headMultiplier: 2.0,
   fireInterval: 0.1,     // 600 rpm
   magazine: 30,
@@ -58,7 +59,7 @@ export const RIFLE = {
   recoilYaw: 0.0035,
   falloffStart: 30,
   falloffEnd: 90,
-  falloffMin: 0.6,
+  falloffMin: 0.7,
 };
 
 export const ROCKET = {
@@ -87,15 +88,20 @@ export const CRUSH = {
   shatterFraction: 0.35,  // portion of a collapsed chunk that breaks into debris on landing
   minClusterForFall: 6,
   maxClusterSearch: 120000,
+  supportRatio: 40,      // a building piece needs a ground contact per this many voxels...
+  supportLoss: 2.2,      // ...or per (its intact weight-per-contact x this), whichever is more, or it collapses
+  supportMinMass: 120,   // smaller bits (signs, roof clutter) are left to the floating check
 };
 
 export const BOT_DIFFICULTY = {
-  easy:   { reaction: 0.65, aimError: 0.11, turnRate: 3.2, fireCone: 0.09, burst: [3, 5], burstPause: 0.55, rocketChance: 0.15, strafe: 0.35, headshot: 0.05, lead: 0.0, viewRange: 45 },
-  medium: { reaction: 0.38, aimError: 0.055, turnRate: 6.0, fireCone: 0.06, burst: [5, 9], burstPause: 0.3, rocketChance: 0.35, strafe: 0.65, headshot: 0.2, lead: 0.5, viewRange: 60 },
-  hard:   { reaction: 0.2, aimError: 0.022, turnRate: 10.0, fireCone: 0.04, burst: [8, 16], burstPause: 0.15, rocketChance: 0.55, strafe: 1.0, headshot: 0.45, lead: 1.0, viewRange: 80 },
+  // reaction: seconds before a newly seen target is engaged; aimError: wobble (rad); turnRate: rad/s;
+  // fireCone: max aim error before pulling the trigger; damage: multiplier on damage bots deal
+  easy:   { reaction: 1.8, aimError: 0.32, turnRate: 1.6, fireCone: 0.06, burst: [1, 3], burstPause: 1.5, rocketChance: 0, strafe: 0.1, headshot: 0.0, lead: 0.0, viewRange: 24, damage: 0.18, missChance: 0.65, settleTime: 5 },
+  medium: { reaction: 1.1, aimError: 0.2, turnRate: 2.4, fireCone: 0.055, burst: [2, 4], burstPause: 1.0, rocketChance: 0.06, strafe: 0.3, headshot: 0.02, lead: 0.15, viewRange: 34, damage: 0.27, missChance: 0.45, settleTime: 3.8 },
+  hard:   { reaction: 0.6, aimError: 0.11, turnRate: 4.0, fireCone: 0.05, burst: [3, 7], burstPause: 0.6, rocketChance: 0.18, strafe: 0.6, headshot: 0.1, lead: 0.5, viewRange: 50, damage: 0.36, missChance: 0.28, settleTime: 2.8 },
 };
 
-export const MAP_ROTATION = ['skyline', 'harbor', 'quarry', 'downtown'];
+export const MAP_ROTATION = ['skyline', 'harbor', 'downtown'];
 
 // Button bitmask used in input packets.
 export const BTN = {

@@ -3,7 +3,7 @@
 A browser-based multiplayer first-person shooter with destructible voxel buildings, built with
 **Three.js**, **vanilla JavaScript**, **Node.js** and **WebSockets**.
 
-Up to eight players (humans + bots) fight free-for-all on four maps. Rockets blow real holes
+Up to eight players (humans + bots) fight free-for-all on three maps. Rockets blow real holes
 in buildings. Cut through a structure's supports and the part above breaks off, falls,
 crushes anyone underneath, then settles as rubble.
 
@@ -51,7 +51,7 @@ the client switches to `wss://` automatically when the page is served over HTTPS
 * **Kills restore 50 health** to the killer. There is no passive regeneration.
 * **Respawn** 3 seconds after death, at the spawn point farthest from enemies, with 1.5 s of spawn protection.
   Protection ends as soon as you fire.
-* **Rifle:** 600 rpm, 30-round magazine, headshots do double damage, spread grows with
+* **Rifle:** 600 rpm, 30-round magazine, 25 damage per hit (4 body hits or 2 headshots), spread grows with
   sustained fire, movement and jumping. Recoil kicks your aim, so pull down to control it.
 * **Rockets:** 4 rockets that regenerate one every 2.4 s. They do splash damage and knockback, and
   they carve out a sphere of voxels.
@@ -64,10 +64,11 @@ the client switches to `wss://` automatically when the page is served over HTTPS
 ### Modes
 
 * **Quick Match:** joins the busiest public room, or creates one. Public rooms are always
-  running and are filled with 5 bots. A bot leaves whenever a human joins, so the room never goes over 8 players.
+  running and are filled with 5 **easy** bots. A bot leaves whenever a human joins, so the room never goes over 8 players.
 * **Private room:** creates a lobby with a 5-character code. Friends join with **Join → code**.
   The host picks the start map, bot count (0–7), bot difficulty (easy / medium / hard) and map
-  rotation, can kick players, start the match, skip to the next map, or end the match and return everyone to
+  rotation (easy bots are slow to notice you, turn slowly, miss most shots, never fire rockets
+  and do about 4 damage per hit; medium bots about 7 and hard bots about 9, with faster aim and more rockets), can kick players, start the match, skip to the next map, or end the match and return everyone to
   the lobby. If the host leaves, host rights pass to another player.
 
 ### Maps
@@ -76,7 +77,6 @@ the client switches to `wss://` automatically when the page is served over HTTPS
 | --- | --- |
 | **Skyline** | Colourful rooftops, sky bridges and a central fountain plaza under a sunset sky |
 | **Harbor** | Stacked shipping containers, warehouses, piers and a giant dock crane over the water |
-| **Quarry** | Terraced desert canyon, rock spires, wooden mine scaffolds and a conveyor bridge |
 | **Downtown** | Multi-storey offices, a parking garage with ramps, parked cars and an elevated walkway |
 
 Each round generates its map from a fresh random seed, so building layout and colours vary every round.
@@ -152,12 +152,16 @@ breakpoint-zero/
 
 1. A rocket carves a noisy sphere of voxels. Bedrock and the arena wall can't be destroyed.
 2. Solid voxels next to the hole are flood-filled; the search heads downward first, so it reaches the ground quickly.
-   Anything that can't reach bedrock is a floating cluster.
-3. Clusters are removed from the grid and fall as rigid bodies. They stop when any of their bottom voxels
+   Anything that can't reach bedrock is a floating cluster. Props don't count as support.
+3. Buildings also need enough support. For each building the map remembers how much weight each ground
+   contact carried when it was intact. If too much of its base is shot away, so that it stands only on its
+   stairs, an inner column or a sky bridge, the rest of the ground floor crumbles and everything above
+   drops as one chunk.
+4. Clusters are removed from the grid and fall as rigid bodies. They stop when any of their bottom voxels
    meets solid ground. Debris left underneath can hold a chunk up partway, as it would in reality.
-4. While falling, a chunk deals crushing damage to anyone it passes through. On impact about 35%
+5. While falling, a chunk deals crushing damage to anyone it passes through. On impact about 35%
    of its voxels shatter into debris, and the rest are written back into the grid as rubble.
-5. Bot pathfinding reads the live grid, so bots walk through new holes and climb over rubble.
+6. Bot pathfinding reads the live grid, so bots walk through new holes and climb over rubble.
 
 ### Rendering
 
@@ -166,30 +170,81 @@ breakpoint-zero/
   grid lines without breaking greedy merging.
 * Shadow-mapped sun, hemisphere light, gradient sky with clouds, distance fog, themed
   backdrops (city skyline, sea, mesas), water.
-* Characters are skinned meshes with idle/walk/run blending. The lower body turns toward
-  the direction of movement, the spine and head pitch with the aim, and analytic two-bone IK keeps both hands on the
-  weapon. On death the body either falls over or is flung by the blast. Each player has a coloured visor and armband.
+* Characters are the five operators from the reference sheets in `client/assets/character/`,
+  modelled, rigged and animated in Blender (see *3D assets* below):
+  * **Viper:** black tank top, scarf, plate carrier, elbow pads, boots, ponytail.
+  * **Ranger:** olive field jacket over a hoodie, dog tags, backpack, sneakers.
+  * **Nova:** white cropped jacket with red stripes, backpack, sneakers, ponytail.
+  * **Ghost:** black hoodie, coyote plate carrier, over-ear headset, tan boots.
+  * **Blaze:** black and red jacket, chest rig, sunglasses, sneakers.
+
+  Their faces are the face close-ups from the sheets, projected onto the head
+  (`client/assets/textures/faces.png`, made by `tools/textures/face_atlas.py`). Each player always
+  plays the same operator, picked from their id, with a team-coloured shoulder patch. Each operator
+  is one skinned mesh, so it costs only 2 draw calls.
+
+  Idle, walk, run, back-pedal, strafe-left/right and jump clips are blended 8-way by velocity, and
+  the spine and neck bend with the aim. Three death animations (forward, backward, headshot) are
+  picked from the hit direction, and explosive deaths fling the body instead.
+* Maps use a voxel texture array (brick, concrete, wood, metal, sand, grass… with normal maps),
+  and are dressed with 22 kinds of Blender props (cars, crates, barrels, lamps, benches, plants,
+  barriers…). Props block movement and bullets, and break when a blast hits them or the floor
+  under them is destroyed.
 * Effects: GPU point particles (fire, smoke, sparks, dust, blood), up to 1,400 instanced
   physical debris cubes that collide with the world, instanced tracers, bullet-hole decals that
   disappear with the wall behind them, dynamic explosion/muzzle lights, shock rings, rocket trails.
-* First-person weapons render in a separate pass so they never clip into walls.
+* Bullets: tracers with heat glow, per-material impacts (sparks on metal, splinters on wood,
+  dust on stone and sand, splashes on water), shell casings, bullet whizzes when shots pass
+  close to you.
+* First-person rifle, launcher and gloved arms come from Blender and render in a separate pass so
+  they never clip into walls.
+* Kill feedback: when you eliminate someone, a skull medallion and ribbon show the victim
+  (ELIMINATED / HEADSHOT / BLASTED / DEMOLISHED), the health you got back and streaks
+  (double kill, triple kill, rampage…), with a short kill-zoom and a gold screen pulse.
+  When you die, the death screen shows who killed you and how much health they had left.
+
+### Sound
+
+All sound is synthesised with WebAudio: layered rifle shots, rocket launch and flight loop,
+explosions with debris rumble, per-material bullet impacts and footsteps, bullet whizzes,
+hit-marker / headshot / kill confirmation tones, streak stingers, reload and shell sounds,
+heartbeat at low health. Sounds are positioned in 3D (HRTF), muffled by distance and by walls
+between you and the source, delayed by the speed of sound at range, and played through a
+reverb tuned per map.
+
+### 3D assets (Blender)
+
+The characters (`build_operators.py`), first-person arms, weapons and props are generated by
+Python scripts in `tools/blender/` and exported to `client/assets/models/*.glb`. The built files are included,
+so you only need Blender to change them. To rebuild (Blender 4.2 or newer):
+
+```
+tools\blender\build_assets.bat
+```
+
+or from a terminal: `blender --background --factory-startup --python tools/blender/run_all.py`.
+The game falls back to procedural models if the `.glb` files are missing.
+If you change the face crops, run `python tools/textures/face_atlas.py` (needs numpy and Pillow) before
+rebuilding the operators.
 
 ---
 
 ## Tests
 
-`npm test` runs 55 tests covering:
+`npm test` runs 59 tests covering:
 
 * voxel raycasting, carving determinism, RLE/base64 serialisation
 * structural collapse (floating cluster detection, overhangs, falling, settling, deterministic shattering)
+* props breaking under blasts, losing their collision and syncing to clients
 * crushing a player with a collapsing slab and crediting the kill
 * movement physics (landing, walls, step-up, jump apex, ceilings, rocket impulse, determinism, unburying)
 * weapon timing (600 rpm, auto-reload, rocket cooldown/regen, spread)
+* building support (a building on its stairs collapses, one damaged wall doesn't)
 * combat (hit damage, headshots, lag compensation, rocket jump, explosions, respawn, kill heal,
   round timer, intermission, map rotation, input-rate limiting, 8-bot matches at all difficulties)
 * rooms (Quick Match fill/bot swapping, private codes, host-only controls, kicking, host migration,
   room full, name sanitising)
-* all four maps (determinism, bedrock, spawn validity, destructibility, A* paths between spawns)
+* all three maps (determinism, bedrock, spawn validity, destructibility, A* paths between spawns)
 * integration over real sockets (static files, two clients in Quick Match, server-side movement from
   binary inputs, private room flow)
 
@@ -209,6 +264,7 @@ breakpoint-zero/
 
 * Rendering: [three.js](https://threejs.org) r170 (MIT).
 * Networking: [ws](https://github.com/websockets/ws) (MIT).
-* Soldier character: the rigged "Vanguard" soldier with idle/walk/run animations from Mixamo,
+* Characters, arms, weapons and props: generated procedurally in Blender by the scripts in `tools/blender/`.
+* Fallback soldier (used only if the Blender characters are missing): the rigged "Vanguard" soldier from Mixamo,
   as distributed with the three.js examples (`examples/models/gltf/Soldier.glb`).
-* Everything else (maps, weapons, effects, sound, UI) is procedurally generated in code.
+* Everything else (maps, textures, effects, sound, UI) is procedurally generated in code.

@@ -1,0 +1,43 @@
+Breakpoint Zero Blender build - Blender 5.2.2 LTS
+[   1.44s] colliders ready
+[   3.75s]   remesh: 119026 voxel faces -> 19202
+[   4.01s]   arm R: 12365 verts, 24598 tris, 2.6s
+[   6.34s]   remesh: 119026 voxel faces -> 19202
+[   6.59s]   arm R: 12365 verts, 24598 tris, 2.6s
+[   7.07s] rig built
+[   7.49s]   grip rifle R: {'middle': [-9.3, 105, 80], 'ring': [-8.8, 90.0, 80], 'pinky': [-10.2, 70.0, 58.5]}  intersecting(mm): ['index_1:-2', 'thumb_2:-10', 'thumb_3:-15']
+[   8.21s]   reach rifle R thumb: flex 22 abduct 0 curl 0 -> 38.1 mm from target, clearance -2.1 mm
+[   8.34s]   trigger finger: mcp -10 pip 36 dip 20 splay -6, pad-to-trigger 1.2 mm
+[   9.03s]   grip rifle L: {'index': [43.6, 64.5, 75], 'middle': [46.8, 68.5, 75], 'ring': [42.4, 63.5, 75], 'pinky': [35.2, 53.5, 45.1]}  intersecting(mm): ['thumb_1:-18', 'thumb_2:-29', 'thumb_3:-11']
+[   9.15s]   reach rifle L thumb: flex -38 abduct -56 curl 60 -> 29.2 mm from target, clearance -1.0 mm
+[   9.81s]   grip aim L: {'index': [46.0, 67.0, 75], 'middle': [48.4, 74.0, 75], 'ring': [45.6, 66.5, 75], 'pinky': [37.2, 56.5, 44.1]}  intersecting(mm): ['thumb_1:-20', 'thumb_2:-29', 'thumb_3:-8']
+[   9.99s]   reach aim L thumb: flex -38 abduct -64 curl 60 -> 28.8 mm from target, clearance -1.1 mm
+[  10.15s]   trigger finger: mcp -4 pip 54 dip 32 splay -6, pad-to-trigger 1.2 mm
+[  10.69s]   grip magazine L: {'index': [46.4, 67.0, 58.1], 'middle': [48.4, 69.5, 54.2], 'ring': [45.2, 65.5, 51.8], 'pinky': [32.0, 49.0, 39.2]}  intersecting(mm): ['thumb_1:-13', 'thumb_2:-13', 'thumb_3:-1']
+[  11.91s]   reach magazine L thumb: flex -50 abduct -8 curl 60 -> 65.2 mm from target, clearance -10.7 mm
+[  12.12s]   grip launcher R: {'middle': [-3.4, 3.5, 7.9], 'ring': [-5.7, 91.0, 80], 'pinky': [3.3, 63.0, 51.8]}  intersecting(mm): ['index_1:-1', 'thumb_2:-10', 'thumb_3:-15']
+[  12.87s]   reach launcher R thumb: flex 22 abduct 0 curl 0 -> 33.6 mm from target, clearance 0.6 mm
+[  13.09s]   trigger finger: mcp -10 pip 30 dip 16 splay -6, pad-to-trigger 3.7 mm
+[  13.91s]   grip launcher L: {'index': [76.4, 100, 75], 'middle': [77.2, 100, 75], 'ring': [72.4, 100, 75], 'pinky': [52.0, 74.5, 75]}  intersecting(mm): ['thumb_1:-14', 'thumb_2:-15']
+[  14.09s]   reach launcher L thumb: flex -50 abduct -24 curl 60 -> 31.3 mm from target, clearance -1.4 mm
+[  14.09s] poses solved
+[  14.15s]   clip Idle: 61 frames
+[  14.15s]   clip Aim: 3 frames
+[  14.16s]   clip Fire: 7 frames
+[  14.20s]   clip Reload: 52 frames
+[  14.21s]   clip LauncherIdle: 3 frames
+[  14.21s] clips keyed
+[  15.27s] gltf export options: ['export_anim_single_armature', 'export_animation_mode', 'export_apply', 'export_force_sampling', 'export_frame_step', 'export_skins', 'export_vertex_color']
+[  15.27s] exported E:\nyxstack\games\breakpoint-zero\client\assets\models\fp_hands.glb 4838 KB
+[  16.85s]   preview ref_back
+[  18.72s]   preview ref_palm
+[  20.34s]   preview ref_thumb
+[  21.98s]   preview ref_pinky
+[  24.31s]   preview fp_idle
+[  27.21s]   preview fp_reload
+[  30.14s]   preview fp_reload2
+[  33.53s]   preview close_right
+[  36.80s]   preview close_left
+[  40.19s]   preview close_under
+[  43.44s] fp hands done in 43s
+[  43.44s] ALL DONE

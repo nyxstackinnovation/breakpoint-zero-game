@@ -1,0 +1,3 @@
+Paste this line into Blender's Python Console (Scripting tab) to rebuild every asset:
+
+import runpy; runpy.run_path(r"E:\nyxstack\games\breakpoint-zero\tools\blender\run_all.py", run_name="__main__")
