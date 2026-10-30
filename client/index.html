@@ -2,7 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#05060d">
   <title>Breakpoint Zero</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Crect width=%2232%22 height=%2232%22 fill=%22%230b0d1a%22/%3E%3Cpath d=%22M6 6h12l-4 8h8L10 28l3-10H6z%22 fill=%22%23ffd60a%22/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -50,7 +54,16 @@
             <button id="btn-fullscreen" class="btn"><span>FULL SCREEN</span></button>
           </div>
         </div>
-        <div class="controls-card">
+        <div class="controls-card touch-card">
+          <div><kbd>LEFT THUMB</kbd> MOVE</div>
+          <div><kbd>SWIPE</kbd> AIM</div>
+          <div><kbd>FIRE</kbd> RIFLE (DRAG TO AIM)</div>
+          <div><kbd>ROCKET</kbd> LAUNCHER</div>
+          <div><kbd>JUMP</kbd> <kbd>R</kbd> JUMP · RELOAD</div>
+          <div><kbd>☰</kbd> <kbd>❚❚</kbd> SCORES · MENU</div>
+          <p class="tip">TIP: Rotate your phone sideways. Fire a rocket at your feet while jumping to rocket-jump.</p>
+        </div>
+        <div class="controls-card key-card">
           <div><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> MOVE</div>
           <div><kbd>MOUSE</kbd> AIM</div>
           <div><kbd>SPACE</kbd> JUMP</div>
@@ -166,6 +179,18 @@
         <div class="ab-rockets"><span class="ab-label">ROCKETS</span><div id="hud-rockets"></div></div>
       </div>
       <div id="perf"></div>
+      <!-- on-screen controls, shown only on touch screens -->
+      <div id="touch-controls">
+        <div class="tc-stick"><div class="tc-knob"></div></div>
+        <div class="tc-top">
+          <button class="tc-btn tc-small" data-btn="score" aria-label="Scoreboard">☰</button>
+          <button class="tc-btn tc-small" data-btn="pause" aria-label="Pause">❚❚</button>
+        </div>
+        <button class="tc-btn tc-fire" data-btn="fire" aria-label="Fire"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M12 2v5M12 17v5M2 12h5M17 12h5"/><circle cx="12" cy="12" r="1.2" fill="currentColor"/></svg></button>
+        <button class="tc-btn tc-rocket" data-btn="rocket" aria-label="Rocket"><svg viewBox="0 0 24 24"><path d="M14.5 4.5c2.5-1.2 4.6-1.3 5.2-.7.6.6.5 2.7-.7 5.2l-6.3 6.3-3.5-3.5z"/><path d="M8.6 10.4 5 10l-2 2 4.2 1.2M13.6 15.4 14 19l-2 2-1.2-4.2"/><path d="M7.2 16.8 4 20"/><circle cx="16" cy="8" r="1.3"/></svg></button>
+        <button class="tc-btn tc-jump" data-btn="jump" aria-label="Jump"><svg viewBox="0 0 24 24"><path d="M6 13l6-6 6 6"/><path d="M6 19l6-6 6 6"/></svg></button>
+        <button class="tc-btn tc-reload" data-btn="reload" aria-label="Reload"><svg viewBox="0 0 24 24"><path d="M19 12a7 7 0 1 1-2.05-4.95"/><path d="M19 4v4.5h-4.5"/></svg></button>
+      </div>
     </section>
 
     <div id="scoreboard" class="overlay hidden">
@@ -185,7 +210,7 @@
     </div>
 
     <div id="round-end" class="overlay hidden">
-      <div class="re-victory hidden" id="re-victory"><span class="rv-main">HONORABLE</span></div>
+      <div class="re-victory hidden" id="re-victory"><div class="rv-aura"></div><div class="rv-rays"></div><div class="rv-embers"></div><div class="rv-word"><span class="rv-main" data-text="HONORABLE">HONORABLE</span><span class="rv-shine" aria-hidden="true">HONORABLE</span></div><div class="rv-line"></div></div>
       <div class="re-panel" id="re-panel">
         <div class="re-kicker">ROUND OVER</div>
         <div class="re-winner" id="re-winner">—</div>
@@ -227,6 +252,7 @@
 
     <div id="click-to-play" class="hidden"><div>CLICK TO PLAY</div><small>ESC opens the menu</small></div>
     <div id="toasts"></div>
+    <div id="rotate-hint"><div class="rh-phone"></div><div>ROTATE YOUR PHONE</div><small>Breakpoint Zero plays in landscape</small></div>
   </div>
 
   <script type="module" src="/js/main.js"></script>

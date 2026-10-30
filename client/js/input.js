@@ -1,6 +1,7 @@
 // Keyboard / mouse input with pointer lock.
 
 import { BTN } from '/shared/constants.js';
+import { isTouchDevice } from './touch.js';
 
 export class Input {
   constructor(canvas) {
@@ -14,6 +15,9 @@ export class Input {
     this.enabled = false;
     this.onLockChange = null;
     this.onKey = null;
+    this.touch = isTouchDevice(); // phones / tablets: no pointer lock, on-screen controls instead
+    this.touchControls = null;
+    this.lastTouch = -1e9;
 
     window.addEventListener('keydown', (e) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
@@ -34,6 +38,7 @@ export class Input {
     window.addEventListener('blur', () => { this.keys.clear(); this.mouse.left = this.mouse.right = false; });
     window.addEventListener('mousedown', (e) => {
       if (!this.locked) return;
+      if (performance.now() - this.lastTouch < 1000) return; // mouse events emulated from a tap
       if (e.button === 0) { this.mouse.left = true; this.latch |= BTN.FIRE; }
       if (e.button === 2) { this.mouse.right = true; this.latch |= BTN.ROCKET; }
     });
@@ -43,7 +48,7 @@ export class Input {
     });
     window.addEventListener('contextmenu', (e) => { if (this.enabled) e.preventDefault(); });
     document.addEventListener('mousemove', (e) => {
-      if (!this.locked) return;
+      if (!this.locked || this.touch) return;
       // clamp absurd deltas some browsers emit on lock
       if (Math.abs(e.movementX) > 600 || Math.abs(e.movementY) > 600) return;
       this.dx += e.movementX;
@@ -54,7 +59,12 @@ export class Input {
     this.lastBlur = -1e9;
     const blurred = () => { this.lastBlur = performance.now(); this.keys.clear(); };
     window.addEventListener('blur', blurred);
-    document.addEventListener('visibilitychange', () => { if (document.hidden) blurred(); });
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) return;
+      blurred();
+      // a phone switching apps or locking the screen pauses the game
+      if (this.touch && this.locked) this.setTouchLock(false, 'esc');
+    });
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === this.canvas;
       if (this.locked) { if (this.onLockChange) this.onLockChange(true, 'lock'); return; }
@@ -68,7 +78,16 @@ export class Input {
     });
   }
 
+  setTouchLock(on, reason) {
+    if (this.locked === on) return;
+    this.locked = on;
+    if (!on) { this.mouse.left = this.mouse.right = false; this.touchControls?.reset(); }
+    document.body.classList.toggle('touch-playing', on);
+    if (this.onLockChange) this.onLockChange(on, reason);
+  }
+
   lock() {
+    if (this.touch) { this.setTouchLock(true, 'lock'); return; }
     if (this.locked) return;
     try {
       const p = this.canvas.requestPointerLock({ unadjustedMovement: true });
@@ -78,7 +97,10 @@ export class Input {
     }
   }
 
-  unlock() { if (document.pointerLockElement) document.exitPointerLock(); }
+  unlock() {
+    if (this.touch) { this.setTouchLock(false, 'esc'); return; }
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
 
   consumeMouse() {
     const d = [this.dx, this.dy];
@@ -99,6 +121,7 @@ export class Input {
     if (k.has('KeyR')) b |= BTN.RELOAD;
     if (this.mouse.left) b |= BTN.FIRE;
     if (this.mouse.right || k.has('KeyQ')) b |= BTN.ROCKET;
+    if (this.touchControls) b |= this.touchControls.flags();
     return b;
   }
 }

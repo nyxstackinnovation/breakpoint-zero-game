@@ -251,6 +251,23 @@ export class Hud {
 
   deathTimer(secs) { this.el.deathTimer.textContent = secs > 0 ? `RESPAWN IN ${Math.ceil(secs)}` : 'RESPAWNING…'; }
 
+  // split HONORABLE into letters (staggered drift-in) and scatter rising embers behind it, once
+  buildVictory(v) {
+    if (v.dataset.built) return;
+    v.dataset.built = '1';
+    const main = v.querySelector('.rv-main');
+    const word = main.dataset.text || main.textContent;
+    main.innerHTML = [...word].map((c, i) => `<span class="ch" style="--i:${i}">${c}</span>`).join('');
+    const embers = v.querySelector('.rv-embers');
+    let html = '';
+    for (let i = 0; i < 26; i++) {
+      const left = 8 + Math.random() * 84, d = 2.2 + Math.random() * 2.4, w = 1 + Math.random() * 3.5, x = (Math.random() - .5) * 120;
+      const sz = 2 + Math.random() * 4;
+      html += `<i style="left:${left}%;--d:${d.toFixed(2)}s;--w:${w.toFixed(2)}s;--x:${x.toFixed(0)}px;width:${sz.toFixed(1)}px;height:${sz.toFixed(1)}px"></i>`;
+    }
+    embers.innerHTML = html;
+  }
+
   showRoundEnd(on, data, meId) {
     this.el.round.classList.toggle('hidden', !on);
     clearTimeout(this.victoryTimer);
@@ -264,10 +281,11 @@ export class Hud {
     panel.classList.remove('wait', 'reveal');
     this.el.round.classList.toggle('victory', won);
     if (won) {
+      this.buildVictory(v);
       void v.offsetWidth;            // restart the animation
       v.classList.add('play');
       panel.classList.add('wait');
-      this.victoryTimer = setTimeout(() => { panel.classList.remove('wait'); panel.classList.add('reveal'); }, 2300);
+      this.victoryTimer = setTimeout(() => { panel.classList.remove('wait'); panel.classList.add('reveal'); }, 3900);
     }
     this.el.reWinner.textContent = w && w.k > 0 ? `${w.name} WINS` : 'NO WINNER';
     this.el.reStand.innerHTML = data.standings.slice(0, 8).map((s) => `<li class="${s.id === meId ? 'me' : ''}"><span style="color:${this.colorOf(s.id)}">${esc(s.name)}${s.bot ? ' <small>BOT</small>' : ''}</span><span>${s.k} / ${s.d}</span></li>`).join('');

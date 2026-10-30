@@ -4,6 +4,8 @@ const KEY = 'bpz.settings.v1';
 
 // Integrated / software GPUs start on Low; everyone else on Medium. Players can change it in Settings.
 function defaultQuality() {
+  // phones and tablets: small GPUs, hot batteries; start on Low
+  try { if (window.matchMedia('(pointer: coarse)').matches && navigator.maxTouchPoints > 0) return 'low'; } catch { /* ignore */ }
   try {
     const gl = document.createElement('canvas').getContext('webgl2');
     const ext = gl && gl.getExtension('WEBGL_debug_renderer_info');

@@ -8,6 +8,7 @@ import { SceneManager } from './scene.js';
 import { CharacterFactory } from './characters.js';
 import { ClientGame } from './game.js';
 import { settings, QUALITY } from './settings.js';
+import { TouchControls } from './touch.js';
 import { PLAYER_COLORS, PROTOCOL_VERSION } from '/shared/constants.js';
 
 const $ = (id) => document.getElementById(id);
@@ -19,6 +20,19 @@ class App {
     this.canvas = $('view');
     this.net = new Net();
     this.input = new Input(this.canvas);
+    if (this.input.touch) {
+      document.body.classList.add('touch');
+      const sens = $('opt-sens').parentElement.firstChild;
+      if (sens && sens.nodeType === 3) sens.textContent = 'LOOK SENSITIVITY ';
+      this.input.touchControls = new TouchControls(this.input, $('touch-controls'), {
+        onPause: () => { if (this.screen === 'hud' && this.input.locked) this.input.unlock(); },
+        onScoreboard: (down) => {
+          if (this.screen !== 'hud') return;
+          this.scoreboardOpen = down;
+          this.hud.showScoreboard(down || this.game.serverState === 'intermission');
+        },
+      });
+    }
     this.audio = new AudioEngine();
     this.audio.setVolume(settings.get('volume'));
     this.hud = new Hud();
@@ -48,6 +62,7 @@ class App {
     for (const id of ['screen-menu', 'screen-lobby', 'screen-loading', 'hud']) $(id).classList.remove('active');
     const map = { menu: 'screen-menu', lobby: 'screen-lobby', loading: 'screen-loading', hud: 'hud' };
     $(map[screen]).classList.add('active');
+    document.body.classList.toggle('in-match', screen === 'hud' || (screen === 'loading' && !!this.inMatch));
     if (screen !== 'hud') {
       $('click-to-play').classList.add('hidden');
       $('pause-menu').classList.add('hidden');
@@ -73,7 +88,9 @@ class App {
     this.show('hud');
     this.input.enabled = true;
     this.inMatch = true;
-    if (!this.input.locked) $('click-to-play').classList.remove('hidden');
+    // touch screens have no mouse to capture: go straight into play (unless the pause menu is open)
+    if (this.input.touch) { if (!this.paused) this.input.lock(); }
+    else if (!this.input.locked) $('click-to-play').classList.remove('hidden');
     this.updatePauseMenu();
   }
 
@@ -92,7 +109,7 @@ class App {
     nameInput.value = settings.get('name') || `Player${Math.floor(Math.random() * 900 + 100)}`;
     nameInput.addEventListener('change', () => settings.set('name', nameInput.value.trim().slice(0, 16)));
     const name = () => { const n = nameInput.value.trim().slice(0, 16) || 'Player'; settings.set('name', n); return n; };
-    const click = (id, fn) => $(id).addEventListener('click', (e) => { this.audio.unlock(); this.audio.ui(); fn(e); });
+    const click = (id, fn) => $(id).addEventListener('click', (e) => { this.audio.unlock(); this.audio.ui(); this.mobileFullscreen(id); fn(e); });
 
     // bot skill for Quick Match, remembered between visits
     const skillBtns = [...document.querySelectorAll('#quick-skill button')];
@@ -197,6 +214,17 @@ class App {
     const q = $('opt-quality');
     q.value = settings.get('quality');
     q.addEventListener('change', () => { settings.set('quality', q.value); this.game.applyQuality(); });
+  }
+
+  // Phones: going into a match from a tap asks for full screen and landscape (both need a user gesture).
+  mobileFullscreen(id) {
+    if (!this.input.touch) return;
+    if (!['btn-quick', 'btn-create', 'btn-join', 'btn-start', 'btn-resume'].includes(id)) return;
+    const el = document.documentElement;
+    const orient = () => screen.orientation?.lock?.('landscape').catch(() => {});
+    if (!document.fullscreenElement && el.requestFullscreen) {
+      el.requestFullscreen({ navigationUI: 'hide' }).then(orient, () => {});
+    } else orient();
   }
 
   requireConn() {

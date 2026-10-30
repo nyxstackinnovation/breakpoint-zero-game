@@ -396,6 +396,17 @@ export class ClientGame {
     this.recoilDebt += kick;
     this.lastShotTime = performance.now();
     this.shake = Math.max(this.shake, 0.04);
+    this.fireKick(0.32, 0.38, 0.4);
+  }
+
+  // Camera shake from your own shots: a spring "punch" (pitch up + a little roll) and a short
+  // high-frequency tremor that builds up during sustained fire and settles within ~0.3 s.
+  fireKick(pitchV, rollV, tremor) {
+    if (!settings.get('shake')) return;
+    this.punch = this.punch || { p: 0, r: 0, vp: 0, vr: 0 };
+    this.punch.vp += pitchV * (0.85 + Math.random() * 0.3);
+    this.punch.vr += (Math.random() - 0.5) * 2 * rollV;
+    this.fireShake = Math.min(1, (this.fireShake || 0) + tremor);
   }
 
   localRocket(inp) {
@@ -409,7 +420,8 @@ export class ClientGame {
     this.audio.rocketLaunch(null, true);
     this.audio.loopStart(`p${inp.seq}`, pos);
     this.effects.muzzle(pos, vel.clone().normalize(), true);
-    this.shake = Math.max(this.shake, 0.15);
+    this.shake = Math.max(this.shake, 0.3);
+    this.fireKick(1.1, 0.9, 1);
   }
 
   // ------------------------------------------------------------------ events
@@ -771,6 +783,15 @@ export class ClientGame {
     const shakeOn = settings.get('shake');
     this.shake = Math.max(0, this.shake - dt * 1.8);
     const sh = shakeOn ? this.shake * this.shake : 0;
+    // firing tremor: smooth layered sines (not white noise) so it reads as weapon vibration, not jitter
+    this.fireShake = Math.max(0, (this.fireShake || 0) - dt * 4.5);
+    const fs = shakeOn ? this.fireShake * this.fireShake : 0;
+    const ft = performance.now() / 1000;
+    const tremP = fs * 0.006 * (Math.sin(ft * 71) + 0.6 * Math.sin(ft * 113 + 1.3));
+    const tremY = fs * 0.005 * (Math.sin(ft * 83 + 0.7) + 0.5 * Math.sin(ft * 131 + 2.1));
+    const tremZ = fs * 0.018 * Math.sin(ft * 57);
+    cam.fov += fs * 1.2; // tiny push-out with each burst
+    cam.updateProjectionMatrix();
     if (this.alive && !this.deathCam) {
       const P = this.pred, Q = this.prev;
       const x = Q.x + (P.x - Q.x) * alpha + this.correction.x;
@@ -780,7 +801,7 @@ export class ClientGame {
       // smooth step-ups
       if (this.camY !== null && P.onGround && ey > this.camY && ey - this.camY < 0.7) ey = this.camY + (ey - this.camY) * (1 - Math.exp(-dt * 22));
       this.camY = ey;
-      cam.position.set(x + (Math.random() - 0.5) * sh * 0.3, ey + (Math.random() - 0.5) * sh * 0.3, z + (Math.random() - 0.5) * sh * 0.3);
+      cam.position.set(x + (Math.random() - 0.5) * sh * 0.3, ey + (Math.random() - 0.5) * sh * 0.3 + tremZ * 0.4, z + (Math.random() - 0.5) * sh * 0.3);
       // view punch from taking a hit: a quick tilt away from the shooter that springs back
       this.punch = this.punch || { p: 0, r: 0, vp: 0, vr: 0 };
       const pu = this.punch, kS = 160, kD = 18;
@@ -793,7 +814,7 @@ export class ClientGame {
       pu.p = Math.max(-0.12, Math.min(0.12, pu.p)); pu.r = Math.max(-0.12, Math.min(0.12, pu.r));
       if (!Number.isFinite(pu.p + pu.r + pu.vp + pu.vr)) { pu.p = pu.r = pu.vp = pu.vr = 0; }
       cam.rotation.order = 'YXZ';
-      cam.rotation.set(this.pitch + pu.p + (Math.random() - 0.5) * sh * 0.05, this.yaw + (Math.random() - 0.5) * sh * 0.05, pu.r);
+      cam.rotation.set(this.pitch + pu.p + tremP + (Math.random() - 0.5) * sh * 0.05, this.yaw + tremY + (Math.random() - 0.5) * sh * 0.05, pu.r + tremY * 0.6);
     } else if (this.deathCam) {
       const d = this.deathCam;
       d.t += dt;
