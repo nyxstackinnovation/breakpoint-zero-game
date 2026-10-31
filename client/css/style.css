@@ -514,3 +514,16 @@ body.touch .controls-card, body.touch .touch-card { display: none !important; }
 }
 @keyframes rv-out { to { opacity: 0; transform: scale(1.06); } }
 @keyframes rv-letter-lite { 0% { opacity: 0; transform: translateY(.35em) scale(1.25); } 100% { opacity: 1; transform: none; } }
+
+/* ---------- win cinematic: letterbox bars, HUD faded out ---------- */
+#ui::before, #ui::after { content: ''; position: absolute; left: 0; right: 0; height: 0; background: #000; z-index: 40; pointer-events: none;
+  transition: height .9s cubic-bezier(.2,.8,.2,1); }
+#ui::before { top: 0; }
+#ui::after { bottom: 0; }
+body.cinematic #ui::before, body.cinematic #ui::after { height: 11vh; }
+body.cinematic.cine-banner #ui::before, body.cinematic.cine-banner #ui::after { height: 0; transition-duration: .5s; }
+#hud { transition: opacity .4s ease; }
+body.cinematic #hud { opacity: 0; }
+body.cinematic #touch-controls { display: none !important; }
+body.cinematic #death-screen { display: none; }
+body.cinematic #click-to-play { display: none !important; }

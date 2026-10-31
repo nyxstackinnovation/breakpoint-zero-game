@@ -150,7 +150,7 @@ export class ClientGame {
     this.pending = [];
     this.alive = false;
     this.clockOffset = msg.tick - performance.now() * TICK_RATE / 1000;
-    this.hud.showRoundEnd(false); this.audio.stopMusic();
+    this.hud.showRoundEnd(false); this.audio.stopMusic(); this.endWinCinematic();
     this.hud.showDeath(false);
     this.state = 'playing';
     const queued = this.eventQueue;
@@ -172,7 +172,7 @@ export class ClientGame {
     for (const id of [...this.audio.loops.keys()]) this.audio.loopStop(id);
     this.voxels.clear();
     this.hud.showDeath(false);
-    this.hud.showRoundEnd(false); this.audio.stopMusic();
+    this.hud.showRoundEnd(false); this.audio.stopMusic(); this.endWinCinematic();
     this.hud.showScoreboard(false);
     const id = this.myId;
     this.reset();
@@ -223,7 +223,7 @@ export class ClientGame {
     }
     this.serverState = msg.state;
     this.timerSecs = msg.secs;
-    if (msg.state === 'playing' && this.roundData) { this.roundData = null; this.hud.showRoundEnd(false); this.audio.stopMusic(); }
+    if (msg.state === 'playing' && this.roundData) { this.roundData = null; this.hud.showRoundEnd(false); this.audio.stopMusic(); this.endWinCinematic(); }
     const me = this.players.get(this.myId);
     if (me) this.lastPing = me.ping;
   }
@@ -548,7 +548,12 @@ export class ClientGame {
           this.serverState = 'intermission';
           this.roundData = ev;
           this.nextRoundAt = performance.now() + ev.secs * 1000;
-          if (this.hud.showRoundEnd(true, ev, this.myId)) this.audio.winMusic();
+          const top = ev.standings[0];
+          if (top && top.id === this.myId && top.k > 0) {
+            // we won: music now, a cinematic camera move around our soldier, then the HONORABLE banner
+            this.audio.winMusic();
+            this.startWinCinematic(ev);
+          } else this.hud.showRoundEnd(true, ev, this.myId);
           this.hud.roundCountdown(ev.secs, ev.nextName);
           this.audio.roundEnd();
           for (const s of ev.standings) { const p = this.players.get(s.id); if (p) { p.k = s.k; p.d = s.d; } }
@@ -706,7 +711,7 @@ export class ClientGame {
     // mouse look
     const [mdx, mdy] = this.input.consumeMouse();
     this.mouseDX = mdx; this.mouseDY = mdy;
-    if (this.input.locked && this.alive && !this.app.paused) {
+    if (this.input.locked && this.alive && !this.app.paused && !this.winCam) {
       const sens = settings.get('sensitivity') * 0.0022;
       this.yaw -= mdx * sens;
       this.pitch -= mdy * sens * (settings.get('invertY') ? -1 : 1);
@@ -762,7 +767,7 @@ export class ClientGame {
     }
     this.sm.update(dt);
     const speed = Math.hypot(this.pred.vx, this.pred.vz);
-    this.vm.update(dt, { speed, onGround: this.pred.onGround, mouseDX: mdx, mouseDY: mdy, alive: this.alive && !this.deathCam });
+    this.vm.update(dt, { speed, onGround: this.pred.onGround, mouseDX: mdx, mouseDY: mdy, alive: this.alive && !this.deathCam && !this.winCam });
     this.updateHud(dt);
     // audio listener
     const fwd = _v.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
@@ -774,6 +779,70 @@ export class ClientGame {
       if (this.stepDist > 2.3) { this.stepDist = 0; this.audio.footstep(null, true, this.surfaceClass(this.pred.x, this.pred.y, this.pred.z)); }
     }
     return true;
+  }
+
+  // ------------------------------------------------------------------ win cinematic
+
+  // Victory: the view pulls out of first person and swings round to a low hero shot of our own soldier
+  // (with letterbox bars and the HUD faded out) while the win music plays. After CINE_SECONDS the
+  // HONORABLE banner starts; the camera keeps drifting slowly behind it until the next round.
+  startWinCinematic(ev) {
+    const P = this.pred;
+    this.winCam = { t: 0, ev, shown: false, x: P.x, y: P.y, z: P.z, yaw: this.yaw, pitch: this.pitch, fov0: this.camera.fov, dist: 0.3 };
+    if (!this.selfCh) {
+      const info = this.players.get(this.myId);
+      this.selfCh = this.factory.create(this.myId, info?.name || 'You', this.quality);
+      this.selfCh.world = this.world;
+      this.scene.add(this.selfCh.root);
+    }
+    if (this.selfCh.dead) this.selfCh.respawn();
+    this.selfCh.setVisible(true);
+    this.hud.showDeath(false);
+    document.body.classList.add('cinematic');
+  }
+
+  endWinCinematic() {
+    this.winCam = null;
+    if (this.selfCh) { this.scene.remove(this.selfCh.root); this.selfCh.dispose?.(); this.selfCh = null; }
+    document.body.classList.remove('cinematic', 'cine-banner');
+  }
+
+  updateWinCamera(dt) {
+    const w = this.winCam, cam = this.camera;
+    w.t += dt;
+    const CINE = 3.0;
+    const u = Math.min(1, w.t / CINE);
+    const e = u < 0.5 ? 4 * u * u * u : 1 - Math.pow(-2 * u + 2, 3) / 2; // ease in-out
+    const after = Math.max(0, w.t - CINE);
+    // our soldier, standing where we were, facing where we looked
+    this.selfCh.update(dt, { x: w.x, y: w.y, z: w.z, yaw: w.yaw, pitch: 0, vx: 0, vy: 0, vz: 0, onGround: true, launcher: false });
+    const fwdX = -Math.sin(w.yaw), fwdZ = -Math.cos(w.yaw);
+    // orbit angle around the soldier: PI = behind (first person), ~0.5 rad = front three-quarter
+    const theta = Math.PI - (Math.PI - 0.5) * e - after * 0.08;
+    const c = Math.cos(theta), sn = Math.sin(theta);
+    const ox = fwdX * c - fwdZ * sn, oz = fwdX * sn + fwdZ * c;
+    const want = 0.3 + 2.5 * e + after * 0.05;
+    const camH = PLAYER.eye + (1.05 - PLAYER.eye) * e;     // drop to a low, heroic angle
+    const chestY = w.y + 1.35;
+    // keep the camera out of walls: pull in until the soldier is in clear view
+    let d = want;
+    while (d > 0.6 && !this.world.clearLine(w.x, chestY, w.z, w.x + ox * d, w.y + camH, w.z + oz * d)) d -= 0.25;
+    w.dist += (d - w.dist) * (1 - Math.exp(-dt * 10));
+    cam.position.set(w.x + ox * w.dist, w.y + camH, w.z + oz * w.dist);
+    // the camera starts inside our own head: only show the soldier once it has pulled clear
+    this.selfCh.root.visible = w.dist > 0.95;
+    // look target slides from the first-person view direction to the soldier's chest
+    const [lx, ly, lz] = dirFromYawPitch(w.yaw, w.pitch);
+    const fpX = w.x + fwdX * 0 + lx * 10, fpY = w.y + PLAYER.eye + ly * 10, fpZ = w.z + lz * 10;
+    const k = Math.min(1, e * 1.4);
+    cam.lookAt(fpX + (w.x - fpX) * k, fpY + (chestY + 0.15 - fpY) * k, fpZ + (w.z - fpZ) * k);
+    cam.fov = w.fov0 + (52 - w.fov0) * e;
+    cam.updateProjectionMatrix();
+    if (!w.shown && w.t >= CINE) {
+      w.shown = true;
+      document.body.classList.add('cine-banner'); // letterbox bars slide away for the banner + results
+      this.hud.showRoundEnd(true, w.ev, this.myId);
+    }
   }
 
   updateCamera(dt, alpha) {
@@ -793,6 +862,7 @@ export class ClientGame {
     const tremZ = fs * 0.018 * Math.sin(ft * 57);
     cam.fov += fs * 1.2; // tiny push-out with each burst
     cam.updateProjectionMatrix();
+    if (this.winCam) { this.updateWinCamera(dt); return; }
     if (this.alive && !this.deathCam) {
       const P = this.pred, Q = this.prev;
       const x = Q.x + (P.x - Q.x) * alpha + this.correction.x;
@@ -898,7 +968,7 @@ export class ClientGame {
     const r = this.sm.renderer;
     r.clear();
     r.render(this.scene, this.camera);
-    if (this.alive && !this.deathCam) {
+    if (this.alive && !this.deathCam && !this.winCam) {
       r.clearDepth();
       r.render(this.vm.scene, this.vm.camera);
     }
