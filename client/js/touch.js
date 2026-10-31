@@ -9,8 +9,9 @@ export const isTouchDevice = () =>
   (('ontouchstart' in window) || navigator.maxTouchPoints > 0) &&
   (window.matchMedia?.('(pointer: coarse)').matches ?? true);
 
-const LOOK_GAIN = 1.7;       // touch pixels -> mouse-equivalent pixels
-const STICK_RADIUS = 56;     // px of finger travel for full deflection
+const LOOK_GAIN = 2.6;       // touch pixels -> mouse-equivalent pixels (about 180 deg per half-screen swipe)
+const RESAMPLE_MS = 10;       // look is read from the finger path a few ms in the past, so it moves evenly every frame
+const STICK_RADIUS = 46;     // px of finger travel for full deflection
 const DEAD = 0.28;           // dead zone before a direction is pressed
 
 export class TouchControls {
@@ -53,14 +54,14 @@ export class TouchControls {
       if (btn) {
         this.press(t.identifier, btn);
         // the fire thumb can be rolled across the screen to keep aiming while shooting
-        if (btn.dataset.btn === 'fire') this.looks.set(t.identifier, { x: t.clientX, y: t.clientY });
+        if (btn.dataset.btn === 'fire' && btn.dataset.side !== 'left') this.looks.set(t.identifier, this.newLook(t));
         continue;
       }
-      if (!this.stick && t.clientX < window.innerWidth * 0.42) {
+      if (!this.stick && t.clientX < window.innerWidth * 0.4) {
         this.stick = { id: t.identifier, ox: t.clientX, oy: t.clientY, x: t.clientX, y: t.clientY };
         this.updateStick();
       } else {
-        this.looks.set(t.identifier, { x: t.clientX, y: t.clientY });
+        this.looks.set(t.identifier, this.newLook(t));
       }
     }
   }
@@ -75,17 +76,78 @@ export class TouchControls {
       }
       const l = this.looks.get(t.identifier);
       if (!l) continue;
-      const dx = t.clientX - l.x, dy = t.clientY - l.y;
-      l.x = t.clientX; l.y = t.clientY;
-      if (this.input.locked) { this.input.dx += dx * LOOK_GAIN; this.input.dy += dy * LOOK_GAIN; }
+      // record the finger path; lookDelta() turns it into an even per-frame turn
+      l.samples.push({ t: performance.now(), x: t.clientX, y: t.clientY });
+      if (l.samples.length > 64) l.samples.splice(0, l.samples.length - 64);
     }
+  }
+
+  newLook(t) {
+    const now = performance.now();
+    return { x: t.clientX, y: t.clientY, samples: [{ t: now, x: t.clientX, y: t.clientY }] };
+  }
+
+  // Finger position at time T, interpolated between the touch samples around it.
+  pathAt(l, T) {
+    const s = l.samples;
+    if (T <= s[0].t) return s[0];
+    for (let i = s.length - 1; i > 0; i--) {
+      const a = s[i - 1], b = s[i];
+      if (T >= a.t && T <= b.t) {
+        const k = b.t > a.t ? (T - a.t) / (b.t - a.t) : 1;
+        return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k };
+      }
+    }
+    // no sample after T yet (events arrive in bursts): continue along the finger's recent velocity for
+    // a short while instead of freezing, so the view doesn't hitch until the next burst lands
+    const b = s[s.length - 1];
+    let a = null;
+    for (let i = s.length - 2; i >= 0; i--) if (b.t - s[i].t >= 6) { a = s[i]; break; }
+    if (!a || b.t - a.t > 60) return b;
+    const ahead = Math.min(T - b.t, 12);
+    const k = ahead / (b.t - a.t);
+    return { x: b.x + (b.x - a.x) * k, y: b.y + (b.y - a.y) * k };
+  }
+
+  // Called once per rendered frame. Touch events arrive at their own rate (60-240 Hz, often in bursts)
+  // which never lines up with the screen's frames, so reading them directly makes the view step and
+  // stutter. Instead the finger path is resampled at frame time (a few ms behind, so there is always a
+  // sample on each side to interpolate between) and the difference since the last frame is the turn.
+  // A gentle speed curve keeps slow drags precise for aiming and fast flicks quick for turning.
+  lookDelta(now, dt) {
+    let dx = 0, dy = 0;
+    const T = now - RESAMPLE_MS;
+    for (const l of this.looks.values()) {
+      const p = this.pathAt(l, T);
+      dx += p.x - l.x; dy += p.y - l.y;
+      l.x = p.x; l.y = p.y;
+      // drop samples that are no longer needed (keep the one just before T)
+      let i = 0;
+      while (i < l.samples.length - 2 && l.samples[i + 1].t <= T) i++;
+      if (i) l.samples.splice(0, i);
+    }
+    // finger speed, smoothed (~70 ms) so the acceleration curve can't make the turn rate flicker
+    const inst = (dx || dy) ? Math.hypot(dx, dy) / Math.max(0.004, dt) : 0; // px per second
+    this.lookSpeed = (this.lookSpeed || 0) + (inst - (this.lookSpeed || 0)) * (1 - Math.exp(-dt / 0.07));
+    if (!dx && !dy) return [0, 0];
+    const speed = this.lookSpeed;
+    const gain = LOOK_GAIN * (0.75 + 0.75 * Math.min(1, speed / 1200)); // fast flicks turn up to 2x faster
+    return [dx * gain, dy * gain];
+  }
+
+  // a finger lifting: apply whatever part of its path was not turned yet
+  flushLook(l) {
+    const last = l.samples[l.samples.length - 1];
+    const dx = last.x - l.x, dy = last.y - l.y;
+    if (dx || dy) { this.input.tdx += dx * LOOK_GAIN * 0.75; this.input.tdy += dy * LOOK_GAIN * 0.75; }
   }
 
   end(e) {
     e.preventDefault();
     for (const t of e.changedTouches) {
       if (this.stick && t.identifier === this.stick.id) { this.stick = null; this.move = 0; this.drawStick(); continue; }
-      this.looks.delete(t.identifier);
+      const l = this.looks.get(t.identifier);
+      if (l) { if (this.input.locked) this.flushLook(l); this.looks.delete(t.identifier); }
       const btn = this.buttons.get(t.identifier);
       if (btn) { this.release(t.identifier, btn); }
     }
@@ -108,14 +170,17 @@ export class TouchControls {
 
   release(id, el) {
     this.buttons.delete(id);
-    const kind = el.dataset.btn;
-    // another finger may still be on the same button
-    if ([...this.buttons.values()].includes(el)) return;
-    el.classList.remove('down');
-    if (kind === 'fire') this.held &= ~BTN.FIRE;
-    if (kind === 'rocket') this.held &= ~BTN.ROCKET;
-    if (kind === 'jump') this.held &= ~BTN.JUMP;
-    if (kind === 'score') this.onScoreboard?.(false);
+    const still = [...this.buttons.values()];
+    if (!still.includes(el)) el.classList.remove('down');
+    if (el.dataset.btn === 'score' && !still.some((b) => b.dataset.btn === 'score')) this.onScoreboard?.(false);
+    // held flags come from whatever buttons still have a finger on them (two FIRE buttons can be held)
+    let h = 0;
+    for (const b of still) {
+      if (b.dataset.btn === 'fire') h |= BTN.FIRE;
+      else if (b.dataset.btn === 'rocket') h |= BTN.ROCKET;
+      else if (b.dataset.btn === 'jump') h |= BTN.JUMP;
+    }
+    this.held = h;
   }
 
   updateStick() {

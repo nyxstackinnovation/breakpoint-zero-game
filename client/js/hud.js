@@ -271,13 +271,14 @@ export class Hud {
   showRoundEnd(on, data, meId) {
     this.el.round.classList.toggle('hidden', !on);
     clearTimeout(this.victoryTimer);
+    this.victoryToken = (this.victoryToken || 0) + 1; // cancels a pending reveal
     const v = this.el.reVictory, panel = this.el.rePanel;
-    if (!on || !data) { v.classList.add('hidden'); v.classList.remove('play'); panel.classList.remove('wait', 'reveal'); return; }
+    if (!on || !data) { v.classList.add('hidden'); v.classList.remove('play', 'done'); panel.classList.remove('wait', 'reveal'); return; }
     const w = data.standings[0];
     // you won: a bold red "HONORABLE VICTORY" slams in first, then rises and the results slide in below it
     const won = !!(w && w.id === meId && w.k > 0);
     v.classList.toggle('hidden', !won);
-    v.classList.remove('play');
+    v.classList.remove('play', 'done');
     panel.classList.remove('wait', 'reveal');
     this.el.round.classList.toggle('victory', won);
     if (won) {
@@ -285,10 +286,23 @@ export class Hud {
       void v.offsetWidth;            // restart the animation
       v.classList.add('play');
       panel.classList.add('wait');
-      this.victoryTimer = setTimeout(() => { panel.classList.remove('wait'); panel.classList.add('reveal'); }, 3900);
+      // show the results when the banner's own exit animation has actually finished, not on a fixed
+      // timer: a slow phone can start drawing the animation late, and a timer then cut it short
+      const token = (this.victoryToken = (this.victoryToken || 0) + 1);
+      const reveal = () => {
+        if (token !== this.victoryToken) return;
+        this.victoryToken++;
+        v.removeEventListener('animationend', onEnd);
+        panel.classList.remove('wait'); panel.classList.add('reveal'); v.classList.add('done');
+      };
+      const onEnd = (e) => { if (e.target === v && (e.animationName === 'rv-rise' || e.animationName === 'rv-out')) reveal(); };
+      v.addEventListener('animationend', onEnd);
+      this.victoryTimer = setTimeout(reveal, 7000); // safety net if animations are off or never fire
+
     }
     this.el.reWinner.textContent = w && w.k > 0 ? `${w.name} WINS` : 'NO WINNER';
     this.el.reStand.innerHTML = data.standings.slice(0, 8).map((s) => `<li class="${s.id === meId ? 'me' : ''}"><span style="color:${this.colorOf(s.id)}">${esc(s.name)}${s.bot ? ' <small>BOT</small>' : ''}</span><span>${s.k} / ${s.d}</span></li>`).join('');
+    return won;
   }
 
   roundCountdown(secs, nextName) { this.el.reNext.textContent = `NEXT: ${nextName} IN ${Math.max(0, Math.ceil(secs))}`; }

@@ -23,7 +23,9 @@ export class AudioEngine {
 
   // recorded samples; until they load (or if they fail) the synthesised versions play on their own
   async loadSamples() {
-    const files = { rifle1: 'rifle_1.wav', rifle2: 'rifle_2.wav', rifle3: 'rifle_3.wav', launch: 'rocket_launch.wav', boom: 'rocket_boom.wav' };
+    const files = { rifle1: 'rifle_1.wav', rifle2: 'rifle_2.wav', rifle3: 'rifle_3.wav', launch: 'rocket_launch.wav', boom: 'rocket_boom.wav',
+      killHead: 'kill_headshot.mp3', killNormal: 'kill_normal.mp3', killRocket: 'kill_rocket.mp3',
+      died: 'player_killed.mp3', win: 'win.mp3' };
     await Promise.all(Object.entries(files).map(async ([k, f]) => {
       try {
         const res = await fetch(`/assets/sounds/${f}`);
@@ -149,7 +151,79 @@ export class AudioEngine {
     this.reverbAmount = open ? 0.18 : 0.3;
   }
 
-  setVolume(v) { this.volume = v; if (this.master) this.master.gain.value = v; }
+  setVolume(v) { this.volume = v; if (this.master) this.master.gain.value = v; if (this.killBus) this.killBus.gain.value = this.killLevel(); }
+
+  // kill clips sit well above the game: full level from about 60% master volume up, but still silent at 0
+  killLevel() { return Math.min(1, this.volume * 1.7); }
+
+  // Kill confirmation clips (headshot / rocket / normal), played at full level: straight to the output
+  // (only the master volume slider applies), not through the compressor and limiter, so the gunfire
+  // around them can't squash them. The game mix dips briefly underneath so the clip stands out.
+  // Returns false when the clip isn't loaded, so the caller can fall back to the synth sting.
+  // Win music: starts with the HONORABLE banner and keeps playing until the next match starts
+  // (stopMusic is called then), fading out instead of cutting off.
+  winMusic() {
+    const buf = this.samples.win;
+    if (!this.ctx || !buf) return false;
+    const ctx = this.ctx, t = ctx.currentTime;
+    this.stopMusic(0.05);
+    if (!this.killBus) { this.killBus = ctx.createGain(); this.killBus.gain.value = this.killLevel(); this.killBus.connect(ctx.destination); }
+    // a kill clip still ringing out gives way to the music
+    if (this.killSrc) { try { this.killGain.gain.setTargetAtTime(0, t, 0.05); this.killSrc.stop(t + 0.3); } catch { /* ended */ } this.killSrc = null; }
+    const src = ctx.createBufferSource(), g = ctx.createGain();
+    src.buffer = buf;
+    src.loop = true; // a long intermission (or the host waiting) just keeps the music going
+    g.gain.value = 1;
+    src.connect(g); g.connect(this.killBus);
+    src.start(t);
+    this.music = { src, g };
+    // game sounds dip while the banner plays, then come back under the music
+    const m = this.master.gain;
+    m.cancelScheduledValues(t);
+    m.setValueAtTime(m.value, t);
+    m.linearRampToValueAtTime(this.volume * 0.15, t + 0.05);
+    m.setValueAtTime(this.volume * 0.15, t + 2.8);
+    m.linearRampToValueAtTime(this.volume * 0.6, t + 3.4);
+    return true;
+  }
+
+  stopMusic(fade = 0.8) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    if (this.music) {
+      const { src, g } = this.music;
+      this.music = null;
+      try { g.gain.cancelScheduledValues(t); g.gain.setValueAtTime(g.gain.value, t); g.gain.linearRampToValueAtTime(0, t + fade); src.stop(t + fade + 0.05); } catch { /* ended */ }
+    }
+    if (this.master) {
+      const m = this.master.gain;
+      m.cancelScheduledValues(t); m.setValueAtTime(m.value, t); m.linearRampToValueAtTime(this.volume, t + Math.max(0.05, fade));
+    }
+  }
+
+  killSound(kind) {
+    const buf = this.samples[{ head: 'killHead', rocket: 'killRocket', died: 'died', win: 'win' }[kind] || 'killNormal'];
+    if (!this.ctx || !buf) return false;
+    const ctx = this.ctx, t = ctx.currentTime;
+    if (!this.killBus) { this.killBus = ctx.createGain(); this.killBus.gain.value = this.killLevel(); this.killBus.connect(ctx.destination); }
+    // one clip at a time: a double kill restarts it instead of stacking two at full level
+    if (this.killSrc) { try { this.killSrc.stop(t + 0.03); this.killGain.gain.setTargetAtTime(0, t, 0.01); } catch { /* already ended */ } }
+    const src = ctx.createBufferSource(), g = ctx.createGain();
+    src.buffer = buf;
+    g.gain.value = 1;
+    src.connect(g); g.connect(this.killBus);
+    src.start(t);
+    this.killSrc = src; this.killGain = g;
+    src.onended = () => { if (this.killSrc === src) this.killSrc = null; };
+    // duck the rest of the game under the clip
+    const m = this.master.gain, d = buf.duration;
+    m.cancelScheduledValues(t);
+    m.setValueAtTime(m.value, t);
+    m.linearRampToValueAtTime(this.volume * 0.15, t + 0.03);
+    m.setValueAtTime(this.volume * 0.15, t + Math.max(0.05, d - 0.3));
+    m.linearRampToValueAtTime(this.volume, t + d + 0.1);
+    return true;
+  }
 
   updateListener(pos, fwd, up) {
     this.listener.x = pos.x; this.listener.y = pos.y; this.listener.z = pos.z;

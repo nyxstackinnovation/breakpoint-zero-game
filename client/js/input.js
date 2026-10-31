@@ -18,6 +18,8 @@ export class Input {
     this.touch = isTouchDevice(); // phones / tablets: no pointer lock, on-screen controls instead
     this.touchControls = null;
     this.lastTouch = -1e9;
+    this.tdx = 0; this.tdy = 0;   // touch look still to be applied (smoothed over a few frames)
+    this.lastConsume = performance.now();
 
     window.addEventListener('keydown', (e) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
@@ -81,7 +83,7 @@ export class Input {
   setTouchLock(on, reason) {
     if (this.locked === on) return;
     this.locked = on;
-    if (!on) { this.mouse.left = this.mouse.right = false; this.touchControls?.reset(); }
+    if (!on) { this.mouse.left = this.mouse.right = false; this.tdx = this.tdy = 0; this.touchControls?.reset(); }
     document.body.classList.toggle('touch-playing', on);
     if (this.onLockChange) this.onLockChange(on, reason);
   }
@@ -103,9 +105,18 @@ export class Input {
   }
 
   consumeMouse() {
-    const d = [this.dx, this.dy];
+    const now = performance.now();
+    const dt = Math.min(0.1, (now - this.lastConsume) / 1000);
+    this.lastConsume = now;
+    let x = this.dx, y = this.dy;
     this.dx = 0; this.dy = 0;
-    return d;
+    // touch look: resampled once per frame (see TouchControls.lookDelta), plus any lifted-finger remainder
+    if (this.touchControls && this.locked) {
+      const [tx, ty] = this.touchControls.lookDelta(now, dt);
+      x += tx + this.tdx; y += ty + this.tdy;
+    }
+    this.tdx = 0; this.tdy = 0;
+    return [x, y];
   }
 
   buttons() {

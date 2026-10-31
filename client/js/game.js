@@ -150,7 +150,7 @@ export class ClientGame {
     this.pending = [];
     this.alive = false;
     this.clockOffset = msg.tick - performance.now() * TICK_RATE / 1000;
-    this.hud.showRoundEnd(false);
+    this.hud.showRoundEnd(false); this.audio.stopMusic();
     this.hud.showDeath(false);
     this.state = 'playing';
     const queued = this.eventQueue;
@@ -172,7 +172,7 @@ export class ClientGame {
     for (const id of [...this.audio.loops.keys()]) this.audio.loopStop(id);
     this.voxels.clear();
     this.hud.showDeath(false);
-    this.hud.showRoundEnd(false);
+    this.hud.showRoundEnd(false); this.audio.stopMusic();
     this.hud.showScoreboard(false);
     const id = this.myId;
     this.reset();
@@ -223,7 +223,7 @@ export class ClientGame {
     }
     this.serverState = msg.state;
     this.timerSecs = msg.secs;
-    if (msg.state === 'playing' && this.roundData) { this.roundData = null; this.hud.showRoundEnd(false); }
+    if (msg.state === 'playing' && this.roundData) { this.roundData = null; this.hud.showRoundEnd(false); this.audio.stopMusic(); }
     const me = this.players.get(this.myId);
     if (me) this.lastPing = me.ping;
   }
@@ -548,7 +548,7 @@ export class ClientGame {
           this.serverState = 'intermission';
           this.roundData = ev;
           this.nextRoundAt = performance.now() + ev.secs * 1000;
-          this.hud.showRoundEnd(true, ev, this.myId);
+          if (this.hud.showRoundEnd(true, ev, this.myId)) this.audio.winMusic();
           this.hud.roundCountdown(ev.secs, ev.nextName);
           this.audio.roundEnd();
           for (const s of ev.standings) { const p = this.players.get(s.id); if (p) { p.k = s.k; p.d = s.d; } }
@@ -667,11 +667,12 @@ export class ClientGame {
       this.hud.deathKiller(kp && ev.k !== ev.v ? `${escapeHtml(this.name(ev.k))} HAD <b>${kp.health} HP</b> LEFT${ev.h ? ' · HEADSHOT' : ''}` : '');
       this.vm.cancelReload();
       this.audio.hurt(true);
+      this.audio.killSound('died');
     }
     if (ev.k === this.myId && ev.v !== this.myId) {
       const kind = ev.w === WEAPON.CRUSH ? 'crush' : ev.h ? 'head' : ev.w === WEAPON.ROCKET ? 'rocket' : '';
       this.hud.killBanner(this.name(ev.v), hex(victimColor), kind, '+50 HP', ev.s || 1);
-      this.audio.elimination(ev.s || 1);
+      if (!this.audio.killSound(ev.w === WEAPON.ROCKET ? 'rocket' : ev.h ? 'head' : 'normal')) this.audio.elimination(ev.s || 1);
       this.killZoom = 1;
       this.shake = Math.max(this.shake, 0.12);
     }
